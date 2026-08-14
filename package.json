@@ -1,0 +1,19 @@
+{
+  "name": "obsidian-knowz-sync",
+  "version": "1.0.0",
+  "description": "Sync Obsidian notes and wikilink relationships into a Knowz vault.",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.0",
+    "obsidian": "^1.4.11",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}

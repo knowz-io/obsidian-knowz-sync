@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Typecheck, test, build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # The Obsidian community directory installs a plugin by downloading main.js
+      # and manifest.json from the release matching manifest.version. A build that
+      # does not emit main.js produces an uninstallable release, so fail loudly here.
+      - name: Verify build output
+        run: test -f main.js || { echo "::error::build did not emit main.js"; exit 1; }
+
+      - name: Verify manifest and package versions agree
+        run: |
+          MANIFEST_VERSION=$(node -p "require('./manifest.json').version")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if [ "$MANIFEST_VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "::error::manifest.json ($MANIFEST_VERSION) and package.json ($PACKAGE_VERSION) disagree"
+            exit 1
+          fi
+          echo "version $MANIFEST_VERSION"

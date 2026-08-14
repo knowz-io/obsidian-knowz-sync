@@ -1,0 +1,99 @@
+name: Hygiene
+
+# This repository is public. Guards against committing identifiers that belong to
+# a real Knowz deployment — captured fixtures are the usual source. Placeholder
+# GUIDs (00000000-…) and api.example.test are the sanctioned stand-ins.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  no-internal-identifiers:
+    name: No internal identifiers
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for internal hostnames and non-placeholder GUIDs
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+
+          SKIP_DIRS = {".git", "node_modules"}
+          # This file is the only exemption, and only because it necessarily contains the
+          # very patterns it searches for. Nothing else under .github/ is exempt — excluding
+          # the whole directory would let a credential hide in any other workflow.
+          SELF = os.path.normpath(".github/workflows/hygiene.yml")
+
+          # Credential patterns apply to EVERY file, lockfile included.
+          CREDENTIALS = {
+              "Knowz API key": r"(?:ukz|kz)_[A-Za-z0-9_\-]{10,}",
+              "private key":   r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
+              "bearer token":  r"(?i)bearer\s+[A-Za-z0-9_\-\.]{15,}",
+              "generic token": r"(?i)(?:api[_-]?key|secret|token)\s*[:=]\s*[\"'][A-Za-z0-9_\-]{16,}[\"']",
+          }
+          # Identifier patterns are skipped for package-lock.json only, where registry
+          # metadata legitimately carries hostnames, maintainer emails, and hashes.
+          IDENTIFIERS = {
+              "internal hostname": r"api\.dev\.knowz\.io|\.azurewebsites\.net|\.database\.windows\.net|knowz-(?:dev|prod|ent|test|uat)-",
+              # The lookbehind keeps URL-embedded credentials (user:pass@host) from reading
+              # as an email address; those are legitimate in tests that assert we reject them.
+              "email address":     r"(?<![:/\w.\-])[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}",
+          }
+          # Any GUID that is not an obvious placeholder.
+          GUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+          PLACEHOLDER_GUID = "00000000-0000-0000-0000-"
+
+          failures = []
+          scanned = 0
+          for dirpath, dirnames, filenames in os.walk("."):
+              dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+              for filename in filenames:
+                  path = os.path.join(dirpath, filename)
+                  if os.path.normpath(path) == SELF:
+                      continue
+                  try:
+                      text = open(path, encoding="utf-8").read()
+                  except (UnicodeDecodeError, OSError):
+                      continue
+                  scanned += 1
+
+                  checks = dict(CREDENTIALS)
+                  if filename != "package-lock.json":
+                      checks.update(IDENTIFIERS)
+
+                  for label, pattern in checks.items():
+                      for match in re.finditer(pattern, text):
+                          line = text[: match.start()].count("\n") + 1
+                          failures.append(f"{path}:{line} [{label}] {match.group(0)[:60]}")
+
+                  if filename != "package-lock.json":
+                      for match in GUID.finditer(text):
+                          value = match.group(0)
+                          if value.startswith(PLACEHOLDER_GUID):
+                              continue
+                          line = text[: match.start()].count("\n") + 1
+                          failures.append(f"{path}:{line} [real GUID] {value}")
+
+          if failures:
+              for failure in sorted(set(failures)):
+                  print(f"::error::{failure}")
+              print(f"\n{len(set(failures))} internal identifier(s) found in {scanned} files.")
+              print("Use 00000000-0000-0000-0000-00000000000N for GUIDs and "
+                    "https://api.example.test for hostnames.")
+              sys.exit(1)
+
+          if scanned == 0:
+              print("::error::scanned 0 files — the guard is not actually checking anything")
+              sys.exit(1)
+
+          print(f"No internal identifiers found across {scanned} files.")
+          PY
