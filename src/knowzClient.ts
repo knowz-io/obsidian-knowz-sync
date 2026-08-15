@@ -125,9 +125,9 @@ export class KnowzClient {
       if (!isRetryable(error)) {
         throw error;
       }
-      // activeWindow rather than globalThis/window, so the timer is owned by the window the
-      // user is actually in when the vault is open in a popout.
-      await new Promise<void>((resolve) => activeWindow.setTimeout(resolve, 2_000));
+      // window, not globalThis or activeWindow: Obsidian's review guidance is that timers
+      // belong on window even though activeWindow is correct for DOM context.
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 2_000));
       return this.post<PushResult>(`/api/v1/git/${repositoryId}/push`, body);
     }
   }
