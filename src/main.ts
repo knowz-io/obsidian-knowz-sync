@@ -9,10 +9,10 @@ import {
   type TAbstractFile,
 } from "obsidian";
 import { InvalidApiUrlError, isTrustedKnowzHost, normalizeApiBaseUrl } from "./apiUrl";
-import { openApprovalUrl } from "./browserLauncher";
 import { confirmFirstSync } from "./confirmSyncModal";
 import { promptForVaultName } from "./createVaultModal";
-import { runObsidianDeviceCodeFlow } from "./deviceAuth";
+import { DeviceApprovalModal } from "./deviceApprovalModal";
+import { DeviceAuthError, runObsidianDeviceCodeFlow } from "./deviceAuth";
 import { KnowzClient, type KnowzVault } from "./knowzClient";
 import { PullReviewModal } from "./pullReviewModal";
 import {
@@ -154,6 +154,8 @@ export default class KnowzSyncPlugin extends Plugin {
   }
 
   async connectToKnowz(): Promise<void> {
+    let approvalModal: DeviceApprovalModal | undefined;
+    let cancelled = false;
     try {
       const result = await runObsidianDeviceCodeFlow(
         this.settings.apiBaseUrl,
@@ -170,14 +172,23 @@ export default class KnowzSyncPlugin extends Plugin {
             window.setTimeout(resolve, milliseconds);
           }),
           now: () => Date.now(),
-          openBrowser: (url) => {
-            openApprovalUrl(url);
+          presentApproval: ({ userCode, verificationUrl, verificationUri }) => {
+            approvalModal = new DeviceApprovalModal(
+              this.app,
+              userCode,
+              verificationUrl,
+              verificationUri,
+              () => {
+                cancelled = true;
+              },
+            );
+            approvalModal.open();
           },
-          showCode: (code, verificationUri) => {
-            new Notice(`Knowz sign-in code: ${code}. If the browser does not open, visit ${verificationUri}.`, 15_000);
-          },
+          shouldCancel: () => cancelled,
         },
       );
+      // The flow ended on its own, so this close is not a cancellation.
+      approvalModal?.complete();
 
       // Persist the only copy of the credential before any follow-up request. The key is
       // deliberately never included in a URL, Notice, or log message.
@@ -207,6 +218,13 @@ export default class KnowzSyncPlugin extends Plugin {
       this.knowzSettingTab?.update();
       new Notice("Knowz connected. Choose a vault to finish setup.");
     } catch (error) {
+      // The modal is still open on every failure path, including a cancel — closing it here
+      // rather than in the flow keeps the one owner of its lifecycle in one place.
+      approvalModal?.complete();
+      if (error instanceof DeviceAuthError && error.kind === "cancelled") {
+        new Notice("Knowz sign-in cancelled.");
+        return;
+      }
       new Notice(`Knowz connection failed: ${messageOf(error)}`);
     }
   }

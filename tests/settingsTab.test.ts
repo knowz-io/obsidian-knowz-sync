@@ -193,7 +193,8 @@ describe("native Knowz onboarding", () => {
       expect.objectContaining({
         request: expect.any(Function),
         sleep: expect.any(Function),
-        openBrowser: expect.any(Function),
+        presentApproval: expect.any(Function),
+        shouldCancel: expect.any(Function),
       }),
     );
     expect(plugin.settings).toMatchObject({

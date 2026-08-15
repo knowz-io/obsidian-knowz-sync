@@ -93,10 +93,12 @@ your vault there and keep it current:
 
 ## Getting a Knowz account
 
-You can create or sign into a Knowz account from the plugin. Open **Settings → Knowz AI Sync**,
-choose **Connect to Knowz**, and finish sign-in in the browser. The plugin receives an expiring
-personal key without putting it in a URL or asking you to copy it. Back in Obsidian, choose an
-existing Knowz vault or create one from the vault dropdown.
+You can create or sign into a Knowz account from the plugin. Open **Settings → Knowz AI Sync**
+and choose **Connect to Knowz**. Obsidian shows you a sign-in code and a button that opens the
+approval page; check that the page shows the same code, approve there, and the plugin receives
+an expiring personal key without putting it in a URL or asking you to copy it. Closing that
+window cancels the sign-in. Back in Obsidian, choose an existing Knowz vault or create one from
+the vault dropdown.
 
 *Self-hosting Knowz instead?* Open **Advanced manual setup**, set your deployment's API URL,
 and enter a personal `ukz_` key and vault ID. The manual fields remain available when a hosted

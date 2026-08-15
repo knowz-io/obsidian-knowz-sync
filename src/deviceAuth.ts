@@ -13,15 +13,37 @@ export interface DeviceAuthResponse {
   json: Record<string, unknown>;
 }
 
+/** What the user needs in order to approve this device. */
+export interface DeviceApproval {
+  /** The code the user checks against the one on the approval page. */
+  userCode: string;
+  /** The URL to open — the pre-filled one when the server supplies it. */
+  verificationUrl: string;
+  /** The bare URL to type by hand if the page cannot be opened. */
+  verificationUri: string;
+}
+
 export interface DeviceAuthDeps {
   request: (request: DeviceAuthRequest) => Promise<DeviceAuthResponse>;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
-  openBrowser: (url: string) => void;
-  showCode: (code: string, verificationUri: string) => void;
+  /**
+   * Presents the code and lets the user open the approval page themselves. The flow
+   * deliberately does not open a browser here: this runs after an awaited request, and a
+   * popup opened at that point is blocked by Electron.
+   */
+  presentApproval: (approval: DeviceApproval) => void;
+  /** Polled between attempts; true stops the flow with a `cancelled` error. */
+  shouldCancel?: () => boolean;
 }
 
-export type DeviceAuthErrorKind = "denied" | "expired" | "invalid-response" | "network" | "refused";
+export type DeviceAuthErrorKind =
+  | "cancelled"
+  | "denied"
+  | "expired"
+  | "invalid-response"
+  | "network"
+  | "refused";
 
 export class DeviceAuthError extends Error {
   constructor(message: string, readonly kind: DeviceAuthErrorKind) {
@@ -85,14 +107,25 @@ export async function runObsidianDeviceCodeFlow(
   const verificationUrl = typeof issued.verification_uri_complete === "string"
     ? issued.verification_uri_complete
     : issued.verification_uri;
-  deps.showCode(issued.user_code, issued.verification_uri);
-  deps.openBrowser(verificationUrl);
+  deps.presentApproval({
+    userCode: issued.user_code,
+    verificationUrl,
+    verificationUri: issued.verification_uri,
+  });
 
   let interval = Math.max(1, typeof issued.interval === "number" ? issued.interval : 5);
   const deadline = deps.now() + issued.expires_in * 1000;
   while (deps.now() < deadline) {
+    if (deps.shouldCancel?.()) {
+      throw new DeviceAuthError("Knowz sign-in was cancelled.", "cancelled");
+    }
     await deps.sleep(interval * 1000);
     if (deps.now() >= deadline) break;
+    // Re-checked after the wait: the user can dismiss at any point during it, and polling on
+    // after that would connect an account the user just declined to connect.
+    if (deps.shouldCancel?.()) {
+      throw new DeviceAuthError("Knowz sign-in was cancelled.", "cancelled");
+    }
 
     let pollResponse: DeviceAuthResponse;
     try {
