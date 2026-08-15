@@ -5,6 +5,7 @@ import {
   KnowzClient,
   type CliFileChange,
   type CliRelationship,
+  type GitFileManifest,
   type PushResult,
 } from "./knowzClient";
 import { isExcluded, type KnowzPluginSettings } from "./settings";
@@ -25,6 +26,51 @@ interface PushOutcome {
   total: PushResult;
   /** Paths in a batch the server reported errors for; must not be recorded as synced. */
   unconfirmedPaths: Set<string>;
+}
+
+export type PullClassification = "unchanged" | "server-only" | "local-only" | "both-changed";
+
+export interface PullChange {
+  knowledgeId: string;
+  path: string;
+  serverHash: string;
+  localHash: string;
+  knownHash: string;
+  updatedAt: string;
+  classification: PullClassification;
+}
+
+export function classifyPullChanges(
+  disk: Record<string, string>,
+  manifest: GitFileManifest["files"],
+  known: Record<string, string>,
+): PullChange[] {
+  const changes: PullChange[] = [];
+
+  for (const entry of [...manifest].sort((left, right) => comparePaths(left.path, right.path))) {
+    if (entry.contentHash === null || !(entry.path in known) || !(entry.path in disk)) {
+      continue;
+    }
+
+    const knownHash = known[entry.path];
+    const localHash = disk[entry.path];
+    const serverChanged = entry.contentHash !== knownHash;
+    const localChanged = localHash !== knownHash;
+    const classification: PullClassification = serverChanged
+      ? (localChanged ? "both-changed" : "server-only")
+      : (localChanged ? "local-only" : "unchanged");
+    changes.push({
+      knowledgeId: entry.knowledgeId,
+      path: entry.path,
+      serverHash: entry.contentHash,
+      localHash,
+      knownHash,
+      updatedAt: entry.updatedAt,
+      classification,
+    });
+  }
+
+  return changes;
 }
 
 function withoutUnconfirmed(
@@ -178,6 +224,8 @@ export function buildRelationships(
 export class SyncEngine {
   private initializedThisSession = false;
   private fullSyncInFlight = false;
+  private pullChanges: PullChange[] = [];
+  private lastPullNoticeSignature = "";
 
   constructor(private readonly host: SyncEngineHost) {}
 
@@ -188,6 +236,80 @@ export class SyncEngine {
   isConfigured(): boolean {
     const { apiBaseUrl, apiKey, vaultId } = this.host.settings;
     return Boolean(apiBaseUrl.trim() && apiKey.trim() && vaultId.trim());
+  }
+
+  getPullChanges(): PullChange[] {
+    return this.pullChanges.map((change) => ({ ...change }));
+  }
+
+  async detectPullChanges(): Promise<PullChange[]> {
+    const repositoryId = this.host.settings.repositoryId || await this.ensureRepository();
+    const manifest = await this.client().getFileManifest(repositoryId);
+    const disk: Record<string, string> = {};
+
+    for (const entry of manifest.files) {
+      if (!(entry.path in this.host.settings.knownFiles)) {
+        continue;
+      }
+      const file = this.host.app.vault.getAbstractFileByPath(entry.path);
+      if (!(file instanceof TFile)) {
+        continue;
+      }
+      disk[entry.path] = await contentHash(await this.host.app.vault.cachedRead(file));
+    }
+
+    const detected = classifyPullChanges(disk, manifest.files, this.host.settings.knownFiles);
+    this.storePullChanges(detected, true);
+    return this.getPullChanges();
+  }
+
+  async applyPullChanges(paths: string[]): Promise<void> {
+    const requested = [...new Set(paths)].sort(comparePaths);
+    if (requested.length === 0) {
+      return;
+    }
+
+    const pending = new Map(this.pullChanges.map((change) => [change.path, change]));
+    for (const path of requested) {
+      const change = pending.get(path);
+      if (!change || change.classification !== "server-only") {
+        throw new Error(`${path} is not a server-only change that can be applied safely`);
+      }
+    }
+
+    const repositoryId = this.host.settings.repositoryId || await this.ensureRepository();
+    const response = await this.client().getFileContents(repositoryId, requested);
+    const byPath = new Map(response.files.map((file) => [file.path, file]));
+    const validated: Array<{ path: string; file: TFile; content: string; hash: string }> = [];
+
+    for (const path of requested) {
+      const pendingChange = pending.get(path)!;
+      const remote = byPath.get(path);
+      if (!remote || remote.knowledgeId !== pendingChange.knowledgeId) {
+        throw new Error(`Knowz did not return the expected note for ${path}`);
+      }
+      const hash = await contentHash(remote.content);
+      if (hash !== pendingChange.serverHash || (remote.contentHash !== null && remote.contentHash !== hash)) {
+        throw new Error(`${path} changed again in Knowz; review the refreshed version`);
+      }
+      const file = this.host.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) {
+        throw new Error(`${path} no longer exists in this Obsidian vault`);
+      }
+      validated.push({ path, file, content: remote.content, hash });
+    }
+
+    for (const item of validated) {
+      await this.host.app.vault.modify(item.file, item.content);
+      this.host.settings.knownFiles[item.path] = item.hash;
+    }
+    await this.host.saveSettings();
+    const applied = new Set(requested);
+    this.pullChanges = this.pullChanges.filter((change) => !applied.has(change.path));
+    this.lastPullNoticeSignature = "";
+    new Notice(
+      `${requested.length} ${requested.length === 1 ? "note" : "notes"} applied from Knowz.`,
+    );
   }
 
   async initializeRepository(): Promise<string> {
@@ -256,12 +378,23 @@ export class SyncEngine {
       }
 
       let plan: { files: CliFileChange[] };
+      let protectedPullPaths = new Set<string>();
       try {
         const response = await this.client().getFileManifest(repositoryId);
         const manifest = Object.fromEntries(
           response.files.map((file) => [file.path, file.contentHash]),
         );
-        plan = computeReconcilePlan(current, manifest, settings.knownFiles);
+        const pullChanges = classifyPullChanges(current, response.files, settings.knownFiles);
+        this.storePullChanges(pullChanges, true);
+        protectedPullPaths = new Set(
+          pullChanges
+            .filter((change) => change.classification === "server-only" || change.classification === "both-changed")
+            .map((change) => change.path),
+        );
+        plan = {
+          files: computeReconcilePlan(current, manifest, settings.knownFiles).files
+            .filter((file) => !protectedPullPaths.has(file.path) && !protectedPullPaths.has(file.oldPath ?? "")),
+        };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         new Notice(
@@ -290,7 +423,16 @@ export class SyncEngine {
         relationships,
       );
 
-      settings.knownFiles = withoutUnconfirmed(current, unconfirmedPaths);
+      const confirmed = withoutUnconfirmed(current, unconfirmedPaths);
+      for (const path of protectedPullPaths) {
+        const previous = settings.knownFiles[path];
+        if (previous === undefined) {
+          delete confirmed[path];
+        } else {
+          confirmed[path] = previous;
+        }
+      }
+      settings.knownFiles = confirmed;
       await this.host.saveSettings();
       new Notice(
         result.filesErrored > 0
@@ -343,6 +485,9 @@ export class SyncEngine {
         if (content.trim() === "" && !wasKnown) {
           continue;
         }
+        if ((change.action === 0 || change.action === 1) && settings.knownFiles[change.path] === hash) {
+          continue;
+        }
         const action = change.action === 0 || change.action === 1
           ? (change.path in settings.knownFiles ? 1 : 0)
           : change.action;
@@ -360,7 +505,38 @@ export class SyncEngine {
         changedSources.add(change.path);
       }
 
-      const pairedFiles = pairRenames(files, (path) => settings.knownFiles[path]);
+      if (files.length === 0) {
+        return;
+      }
+
+      const manifest = await this.client().getFileManifest(repositoryId);
+      const diskForDetection = Object.fromEntries(
+        files
+          .filter((file): file is CliFileChange & { contentHash: string } => Boolean(file.contentHash))
+          .map((file) => [file.path, file.contentHash]),
+      );
+      const pullChanges = classifyPullChanges(
+        diskForDetection,
+        manifest.files,
+        settings.knownFiles,
+      );
+      this.storePullChanges(pullChanges, false);
+      const protectedPullPaths = new Set(
+        pullChanges
+          .filter((change) => change.classification === "server-only" || change.classification === "both-changed")
+          .map((change) => change.path),
+      );
+      for (const path of protectedPullPaths) {
+        const previous = settings.knownFiles[path];
+        if (previous === undefined) {
+          delete nextKnown[path];
+        } else {
+          nextKnown[path] = previous;
+        }
+      }
+
+      const pairedFiles = pairRenames(files, (path) => settings.knownFiles[path])
+        .filter((file) => !protectedPullPaths.has(file.path) && !protectedPullPaths.has(file.oldPath ?? ""));
 
       const syncedFiles = this.host.app.vault
         .getMarkdownFiles()
@@ -469,6 +645,42 @@ export class SyncEngine {
       apiBaseUrl: this.host.settings.apiBaseUrl,
       apiKey: this.host.settings.apiKey,
     });
+  }
+
+  private storePullChanges(detected: PullChange[], replace: boolean): void {
+    const relevant = detected.filter(
+      (change) => change.classification === "server-only" || change.classification === "both-changed",
+    );
+    if (replace) {
+      this.pullChanges = relevant;
+    } else {
+      const detectedPaths = new Set(detected.map((change) => change.path));
+      this.pullChanges = [
+        ...this.pullChanges.filter((change) => !detectedPaths.has(change.path)),
+        ...relevant,
+      ].sort((left, right) => comparePaths(left.path, right.path));
+    }
+
+    const signature = this.pullChanges
+      .map((change) => `${change.path}:${change.serverHash}:${change.classification}`)
+      .join("|");
+    if (!signature || signature === this.lastPullNoticeSignature) {
+      return;
+    }
+    this.lastPullNoticeSignature = signature;
+
+    const serverOnly = this.pullChanges.filter((change) => change.classification === "server-only").length;
+    const conflicts = this.pullChanges.filter((change) => change.classification === "both-changed").length;
+    if (serverOnly > 0) {
+      new Notice(
+        `${serverOnly} ${serverOnly === 1 ? "note" : "notes"} changed in Knowz — review before syncing ${serverOnly === 1 ? "it" : "them"}.`,
+      );
+    }
+    if (conflicts > 0) {
+      new Notice(
+        `${conflicts} ${conflicts === 1 ? "note has" : "notes have"} changes in both Knowz and Obsidian — review ${conflicts === 1 ? "the conflict" : "the conflicts"}.`,
+      );
+    }
   }
 }
 

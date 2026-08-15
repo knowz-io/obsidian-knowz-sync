@@ -29,6 +29,9 @@ export class Plugin {
   }
   addSettingTab(_tab: unknown): void {}
   registerEvent(_ref: unknown): void {}
+  registerInterval(_id: number): number {
+    return _id;
+  }
   async loadData(): Promise<unknown> {
     return null;
   }
@@ -118,7 +121,9 @@ export class Setting {
   desc = "";
   heading = false;
 
-  constructor(_containerEl?: unknown) {}
+  constructor(_containerEl?: unknown) {
+    settingInstances.push(this);
+  }
   setName(name: string): this {
     this.name = name;
     return this;
@@ -153,6 +158,8 @@ export class Setting {
     return this;
   }
 }
+
+export const settingInstances: Setting[] = [];
 
 export class Modal {
   contentEl = {

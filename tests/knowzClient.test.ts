@@ -103,11 +103,13 @@ describe("KnowzClient", () => {
         data: {
           files: [
             {
+              knowledgeId: "knowledge-a",
               path: "Projects/Knowz Integration.md",
               contentHash: "sha256:aaa",
               updatedAt: "2026-08-14T05:00:00Z",
             },
             {
+              knowledgeId: "knowledge-b",
               path: "Inbox/Unhashed.md",
               contentHash: null,
               updatedAt: "2026-08-14T05:01:00Z",
@@ -125,11 +127,13 @@ describe("KnowzClient", () => {
     expect(manifest).toEqual({
       files: [
         {
+          knowledgeId: "knowledge-a",
           path: "Projects/Knowz Integration.md",
           contentHash: "sha256:aaa",
           updatedAt: "2026-08-14T05:00:00Z",
         },
         {
+          knowledgeId: "knowledge-b",
           path: "Inbox/Unhashed.md",
           contentHash: null,
           updatedAt: "2026-08-14T05:01:00Z",
@@ -143,6 +147,45 @@ describe("KnowzClient", () => {
       headers: { "X-Api-Key": "ukz_test" },
       throw: false,
     });
+  });
+
+  it("fetches repository-scoped note content in one bounded batch", async () => {
+    requestUrlMock.mockResolvedValueOnce({
+      status: 200,
+      json: {
+        success: true,
+        data: {
+          files: [{
+            knowledgeId: "knowledge-a",
+            path: "Projects/Knowz Integration.md",
+            content: "# Updated in Knowz",
+            contentHash: "sha256:new",
+            updatedAt: "2026-08-15T08:00:00Z",
+          }],
+          totalCount: 1,
+          maxBatchSize: 100,
+        },
+      },
+    } as never);
+    const client = new KnowzClient({ apiBaseUrl: "https://api.example.test", apiKey: "ukz_test" });
+
+    await expect(client.getFileContents("repository-guid", ["Projects/Knowz Integration.md"]))
+      .resolves.toEqual({
+        files: [{
+          knowledgeId: "knowledge-a",
+          path: "Projects/Knowz Integration.md",
+          content: "# Updated in Knowz",
+          contentHash: "sha256:new",
+          updatedAt: "2026-08-15T08:00:00Z",
+        }],
+        totalCount: 1,
+        maxBatchSize: 100,
+      });
+    expect(requestUrlMock).toHaveBeenCalledWith(expect.objectContaining({
+      url: "https://api.example.test/api/v1/git/repository-guid/files/content",
+      method: "POST",
+      body: JSON.stringify({ paths: ["Projects/Knowz Integration.md"] }),
+    }));
   });
 
   it("surfaces errors[0] from a failed manifest envelope", async () => {

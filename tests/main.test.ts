@@ -88,6 +88,28 @@ describe("KnowzSyncPlugin.onload", () => {
       name: "Connect to Knowz",
       callback: expect.any(Function),
     }));
+    expect(addCommand).toHaveBeenCalledWith(expect.objectContaining({
+      id: "review-knowz-changes",
+      name: "Review changes from Knowz",
+      callback: expect.any(Function),
+    }));
+  });
+
+  it("starts passive pull detection only for an already-synced repository", async () => {
+    const { app } = makeApp(true);
+    const plugin = makePlugin(app, {
+      ...CONFIGURED,
+      repositoryId: "repository-guid",
+      hasConfirmedFirstSync: true,
+      syncOnStartup: false,
+    });
+    const detect = vi.spyOn(SyncEngine.prototype, "detectPullChanges").mockResolvedValue([]);
+
+    await plugin.onload();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(detect).toHaveBeenCalledOnce();
   });
 
   it("registers watchers once layout is ready", async () => {

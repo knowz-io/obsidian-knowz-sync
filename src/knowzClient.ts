@@ -28,11 +28,24 @@ export interface PushResult {
 
 export interface GitFileManifest {
   files: Array<{
+    knowledgeId: string;
     path: string;
     contentHash: string | null;
     updatedAt: string;
   }>;
   totalCount: number;
+}
+
+export interface GitFileContentResponse {
+  files: Array<{
+    knowledgeId: string;
+    path: string;
+    content: string;
+    contentHash: string | null;
+    updatedAt: string;
+  }>;
+  totalCount: number;
+  maxBatchSize: number;
 }
 
 export interface KnowzVault {
@@ -144,6 +157,13 @@ export class KnowzClient {
 
   async getFileManifest(repositoryId: string): Promise<GitFileManifest> {
     return this.get<GitFileManifest>(`/api/v1/git/${repositoryId}/files`);
+  }
+
+  async getFileContents(repositoryId: string, paths: string[]): Promise<GitFileContentResponse> {
+    return this.post<GitFileContentResponse>(
+      `/api/v1/git/${repositoryId}/files/content`,
+      { paths },
+    );
   }
 
   async listVaults(): Promise<KnowzVault[]> {

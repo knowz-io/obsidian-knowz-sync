@@ -6,6 +6,7 @@ import { KnowzClient } from "../src/knowzClient";
 import type { KnowzPluginSettings } from "../src/settings";
 import {
   buildRelationships,
+  classifyPullChanges,
   computeReconcilePlan,
   computeSyncPlan,
   isUnsafeFullSyncPlan,
@@ -13,6 +14,38 @@ import {
   SyncEngine,
   type SyncEngineHost,
 } from "../src/syncEngine";
+
+describe("classifyPullChanges", () => {
+  it("classifies server-only, local-only, both-changed, and unchanged notes", () => {
+    const manifest = [
+      { knowledgeId: "server", path: "server.md", contentHash: "server-new", updatedAt: "now" },
+      { knowledgeId: "local", path: "local.md", contentHash: "base-local", updatedAt: "now" },
+      { knowledgeId: "both", path: "both.md", contentHash: "server-new", updatedAt: "now" },
+      { knowledgeId: "same", path: "same.md", contentHash: "base-same", updatedAt: "now" },
+    ];
+
+    expect(classifyPullChanges(
+      {
+        "server.md": "base-server",
+        "local.md": "local-new",
+        "both.md": "local-new",
+        "same.md": "base-same",
+      },
+      manifest,
+      {
+        "server.md": "base-server",
+        "local.md": "base-local",
+        "both.md": "base-both",
+        "same.md": "base-same",
+      },
+    ).map(({ path, classification }) => ({ path, classification }))).toEqual([
+      { path: "both.md", classification: "both-changed" },
+      { path: "local.md", classification: "local-only" },
+      { path: "same.md", classification: "unchanged" },
+      { path: "server.md", classification: "server-only" },
+    ]);
+  });
+});
 
 describe("isUnsafeFullSyncPlan", () => {
   it("flags an empty vault reading while files are already synced", () => {
@@ -151,6 +184,9 @@ function makeEngine(
         getName: () => "TestVault",
         getMarkdownFiles: () => files,
         cachedRead: async (file: TFile) => contents[file.path] ?? "",
+        modify: async (file: TFile, content: string) => {
+          contents[file.path] = content;
+        },
         getAbstractFileByPath: (path: string) => fileByPath.get(path) ?? null,
       },
       metadataCache: { resolvedLinks: {} },
@@ -167,6 +203,10 @@ describe("SyncEngine bidirectional hardening", () => {
     vi.restoreAllMocks();
     noticeMessages.length = 0;
     vi.spyOn(KnowzClient.prototype, "initRepository").mockResolvedValue("repository-guid");
+    vi.spyOn(KnowzClient.prototype, "getFileManifest").mockResolvedValue({
+      files: [],
+      totalCount: 0,
+    });
   });
 
   it("falls back to the local plan and completes when manifest reconciliation fails", async () => {
@@ -226,6 +266,7 @@ describe("SyncEngine bidirectional hardening", () => {
     );
     vi.spyOn(KnowzClient.prototype, "getFileManifest").mockResolvedValue({
       files: [{
+        knowledgeId: "known-empty-id",
         path: "known-empty.md",
         contentHash: "old-hash",
         updatedAt: "2026-08-14T05:00:00Z",
@@ -279,7 +320,7 @@ describe("SyncEngine bidirectional hardening", () => {
     const hash = await contentHash("same content");
     const { engine, settings } = makeEngine({ "new.md": "same content" }, { "old.md": hash });
     vi.spyOn(KnowzClient.prototype, "getFileManifest").mockResolvedValue({
-      files: [{ path: "old.md", contentHash: hash, updatedAt: "2026-08-14T05:00:00Z" }],
+      files: [{ knowledgeId: "old-id", path: "old.md", contentHash: hash, updatedAt: "2026-08-14T05:00:00Z" }],
       totalCount: 1,
     });
     const push = vi.spyOn(KnowzClient.prototype, "push").mockResolvedValue({
@@ -379,6 +420,93 @@ describe("SyncEngine bidirectional hardening", () => {
     ]);
 
     expect(settings.knownFiles).toEqual({ "old.md": hash });
+  });
+
+  it("holds a server-only change for explicit review instead of overwriting it", async () => {
+    const baseHash = await contentHash("base");
+    const serverHash = await contentHash("changed in Knowz");
+    const { engine, settings } = makeEngine({ "note.md": "base" }, { "note.md": baseHash });
+    vi.spyOn(KnowzClient.prototype, "getFileManifest").mockResolvedValue({
+      files: [{
+        knowledgeId: "note-id",
+        path: "note.md",
+        contentHash: serverHash,
+        updatedAt: "2026-08-15T08:00:00Z",
+      }],
+      totalCount: 1,
+    });
+    const push = vi.spyOn(KnowzClient.prototype, "push");
+
+    await engine.runFullSync();
+
+    expect(push).not.toHaveBeenCalled();
+    expect(settings.knownFiles).toEqual({ "note.md": baseHash });
+    expect(engine.getPullChanges()).toEqual([
+      expect.objectContaining({ path: "note.md", classification: "server-only" }),
+    ]);
+    expect(noticeMessages).toContain("1 note changed in Knowz — review before syncing it.");
+  });
+
+  it("reports a both-changed note as conflicted and never auto-applies or pushes it", async () => {
+    const baseHash = await contentHash("base");
+    const serverHash = await contentHash("changed in Knowz");
+    const { engine } = makeEngine({ "note.md": "changed locally" }, { "note.md": baseHash });
+    vi.spyOn(KnowzClient.prototype, "getFileManifest").mockResolvedValue({
+      files: [{
+        knowledgeId: "note-id",
+        path: "note.md",
+        contentHash: serverHash,
+        updatedAt: "2026-08-15T08:00:00Z",
+      }],
+      totalCount: 1,
+    });
+    const push = vi.spyOn(KnowzClient.prototype, "push");
+
+    await engine.runFullSync();
+
+    expect(push).not.toHaveBeenCalled();
+    expect(engine.getPullChanges()).toEqual([
+      expect.objectContaining({ path: "note.md", classification: "both-changed" }),
+    ]);
+    expect(noticeMessages).toContain("1 note has changes in both Knowz and Obsidian — review the conflict.");
+  });
+
+  it("applies an explicit server-only change and suppresses the watcher echo", async () => {
+    const baseHash = await contentHash("base");
+    const serverContent = "changed in Knowz";
+    const serverHash = await contentHash(serverContent);
+    const { engine, host, settings } = makeEngine({ "note.md": "base" }, { "note.md": baseHash });
+    vi.spyOn(KnowzClient.prototype, "getFileManifest").mockResolvedValue({
+      files: [{
+        knowledgeId: "note-id",
+        path: "note.md",
+        contentHash: serverHash,
+        updatedAt: "2026-08-15T08:00:00Z",
+      }],
+      totalCount: 1,
+    });
+    vi.spyOn(KnowzClient.prototype, "getFileContents").mockResolvedValue({
+      files: [{
+        knowledgeId: "note-id",
+        path: "note.md",
+        content: serverContent,
+        contentHash: serverHash,
+        updatedAt: "2026-08-15T08:00:00Z",
+      }],
+      totalCount: 1,
+      maxBatchSize: 100,
+    });
+    const push = vi.spyOn(KnowzClient.prototype, "push");
+
+    await engine.detectPullChanges();
+    await engine.applyPullChanges(["note.md"]);
+    await engine.pushChanges([{ path: "note.md", action: 1 }]);
+
+    expect(host.app.vault.cachedRead(
+      host.app.vault.getAbstractFileByPath("note.md") as TFile,
+    )).resolves.toBe(serverContent);
+    expect(settings.knownFiles).toEqual({ "note.md": serverHash });
+    expect(push).not.toHaveBeenCalled();
   });
 });
 

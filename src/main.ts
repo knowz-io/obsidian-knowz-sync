@@ -12,6 +12,7 @@ import { InvalidApiUrlError, isTrustedKnowzHost, normalizeApiBaseUrl } from "./a
 import { confirmFirstSync } from "./confirmSyncModal";
 import { runObsidianDeviceCodeFlow } from "./deviceAuth";
 import { KnowzClient, type KnowzVault } from "./knowzClient";
+import { PullReviewModal } from "./pullReviewModal";
 import {
   DEFAULT_SETTINGS,
   isExcluded,
@@ -27,6 +28,7 @@ export default class KnowzSyncPlugin extends Plugin {
   private readonly changeQueue = new ChangeQueue();
   private debounceTimer: number | null = null;
   private watchersRegistered = false;
+  private pullDetectionRegistered = false;
   private availableVaults: KnowzVault[] = [];
 
   async onload(): Promise<void> {
@@ -57,6 +59,13 @@ export default class KnowzSyncPlugin extends Plugin {
         void this.connectToKnowz();
       },
     });
+    this.addCommand({
+      id: "review-knowz-changes",
+      name: "Review changes from Knowz",
+      callback: () => {
+        void this.reviewRemoteChanges();
+      },
+    });
     this.addSettingTab(new KnowzSettingTab(this.app, this));
 
     // Vault watchers and the startup sync must wait for the workspace layout. Before it is
@@ -83,6 +92,7 @@ export default class KnowzSyncPlugin extends Plugin {
     }
 
     this.registerVaultWatchers();
+    this.startPullDetection();
 
     // Repository initialization is no longer done eagerly on every launch. It is a network
     // call that creates server-side state, and doing it unprompted meant simply having the
@@ -117,6 +127,26 @@ export default class KnowzSyncPlugin extends Plugin {
       return;
     }
     await this.syncEngine.runFullSync();
+    this.startPullDetection();
+  }
+
+  remoteChangeCount(): number {
+    return this.syncEngine?.getPullChanges().length ?? 0;
+  }
+
+  async reviewRemoteChanges(): Promise<void> {
+    try {
+      const changes = await this.syncEngine.detectPullChanges();
+      if (changes.length === 0) {
+        new Notice("No changes from Knowz to review.");
+        return;
+      }
+      new PullReviewModal(this.app, changes, async (paths) => {
+        await this.syncEngine.applyPullChanges(paths);
+      }).open();
+    } catch (error) {
+      new Notice(`Could not review changes from Knowz: ${messageOf(error)}`);
+    }
   }
 
   async connectToKnowz(): Promise<void> {
@@ -318,6 +348,30 @@ export default class KnowzSyncPlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => this.queueVaultChange(file, 3, oldPath)),
     );
+  }
+
+  private startPullDetection(): void {
+    if (
+      this.pullDetectionRegistered ||
+      !this.settings.repositoryId ||
+      !this.settings.hasConfirmedFirstSync
+    ) {
+      return;
+    }
+
+    this.pullDetectionRegistered = true;
+    void this.checkPullChanges();
+    this.registerInterval(window.setInterval(() => {
+      void this.checkPullChanges();
+    }, 5 * 60 * 1_000));
+  }
+
+  private async checkPullChanges(): Promise<void> {
+    try {
+      await this.syncEngine.detectPullChanges();
+    } catch (error) {
+      new Notice(`Knowz pull check failed: ${messageOf(error)}`);
+    }
   }
 
   private queueVaultChange(file: TAbstractFile, action: ChangeAction, oldPath?: string): void {
@@ -553,6 +607,19 @@ export class KnowzSettingTab extends PluginSettingTab {
             } catch (error) {
               new Notice(`Could not refresh Knowz vaults: ${messageOf(error)}`);
             }
+          }));
+        },
+      },
+      {
+        name: "Changes from Knowz",
+        desc:
+          `${this.plugin.remoteChangeCount()} ` +
+          `${this.plugin.remoteChangeCount() === 1 ? "note needs" : "notes need"} review before being written to Obsidian`,
+        aliases: ["pull", "download", "remote", "review", "conflict", "changed"],
+        render: (setting) => {
+          setting.addButton((button) => button.setButtonText("Review").onClick(async () => {
+            await this.plugin.reviewRemoteChanges();
+            this.update();
           }));
         },
       },
