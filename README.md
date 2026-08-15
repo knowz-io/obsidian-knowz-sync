@@ -13,6 +13,48 @@ Obsidian stays in control. Nothing is written back automatically: when a note ch
 Knowz, the plugin shows it for review and only updates the local file when you explicitly
 choose **Apply**.
 
+## See what your Obsidian vault becomes
+
+Sync is only the beginning. In the Knowz web app, the same Markdown becomes enriched,
+searchable, connected knowledge that you can explore and ask questions about.
+
+### AI summaries and structured knowledge
+
+Knowz generates an overview, key points, and a detailed breakdown while preserving the
+original Markdown and its history.
+
+![Knowz AI summary with key points generated from an Obsidian note](https://raw.githubusercontent.com/knowz-io/obsidian-knowz-sync/main/assets/screenshots/knowz-ai-summary.png)
+
+### A knowledge editor with AI controls
+
+Work directly with Markdown, choose the destination vault, attach files, and control AI
+summary and searchable-text enrichment per item.
+
+![Knowz Markdown knowledge editor with AI enrichment controls](https://raw.githubusercontent.com/knowz-io/obsidian-knowz-sync/main/assets/screenshots/knowz-knowledge-editor.png)
+
+### Your Obsidian links as an interactive graph
+
+Folders, notes, and `[[wikilinks]]` become navigable relationships instead of disappearing
+into a flat file list.
+
+![Interactive Knowz graph of folders and notes synced from an Obsidian vault](https://raw.githubusercontent.com/knowz-io/obsidian-knowz-sync/main/assets/screenshots/knowz-knowledge-graph.png)
+
+### Grounded agentic chat
+
+Scope an agent to the Obsidian vault and get a multi-step answer grounded in the notes, with
+clickable sources and passages rather than an untraceable response.
+
+![Knowz agentic chat answering from an Obsidian vault with cited notes](https://raw.githubusercontent.com/knowz-io/obsidian-knowz-sync/main/assets/screenshots/knowz-agentic-chat.png)
+
+### Semantic search and related-note discovery
+
+Search by meaning, preview the matching passages, and reveal related notes created from the
+vault's link graph.
+
+![Knowz semantic search showing matching and related Obsidian notes](https://raw.githubusercontent.com/knowz-io/obsidian-knowz-sync/main/assets/screenshots/knowz-semantic-search.png)
+
+Feature availability depends on the Knowz plan and tenant configuration.
+
 ## What you get with a Knowz account
 
 - **Semantic search.** Find the note you meant, not the one that happened to share a word.
