@@ -1,14 +1,33 @@
-# Knowz Sync for Obsidian
+# Knowz for Obsidian
 
-Send your Markdown notes — and the link graph between them — to a [Knowz](https://knowz.io)
-vault, so your writing becomes searchable, enriched, and reachable by AI agents without
-leaving Obsidian behind.
+Your vault is already the best record of what you know. This connects it to
+[Knowz](https://knowz.io) and turns it into something you can *ask*.
 
-Obsidian stays the source of truth. Knowz becomes the layer on top: semantic search across
-everything you've written, AI-generated summaries, and a knowledge graph that already knows
-how your notes connect, because it inherits your `[[wikilinks]]`.
+Sign in, and your notes become a retrieval system: chunked and embedded into a vector store,
+searchable by meaning rather than keyword, traversable as a graph that inherits your
+`[[wikilinks]]`, and reachable by AI agents that answer from your own writing instead of
+guessing. The same corpus powers enterprise AI chat, so a team can ask questions of everything
+it has collectively written.
 
-## What it does
+Obsidian stays the source of truth. Nothing about how you write changes — Knowz becomes the
+intelligence layer on top of it.
+
+## What you get with a Knowz account
+
+- **Semantic search.** Find the note you meant, not the one that happened to share a word.
+- **Vector embeddings and chunking.** Long notes are split intelligently, so retrieval returns
+  the passage that answers the question rather than a whole document.
+- **Agentic retrieval.** Agents plan multi-step lookups across your corpus and cite what they
+  used.
+- **A knowledge graph.** Your wikilinks become real relationships, so connected ideas surface
+  together.
+- **AI chat over your notes**, individually or across a team, with enterprise controls.
+- **AI enrichment.** Summaries and extracted entities generated as notes arrive.
+
+These are Knowz platform capabilities and need a Knowz account. What this plugin does is put
+your vault there and keep it current:
+
+## What the plugin does
 
 - **Syncs your Markdown notes** to a Knowz vault of your choosing.
 - **Preserves your link graph.** Wikilinks are read from Obsidian's own resolved-link index —

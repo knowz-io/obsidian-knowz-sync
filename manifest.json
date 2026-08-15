@@ -1,9 +1,9 @@
 {
   "id": "knowz-sync",
-  "name": "Knowz Sync",
-  "version": "1.0.2",
+  "name": "Knowz",
+  "version": "1.0.3",
   "minAppVersion": "1.4.0",
-  "description": "Sync notes and backlinks one way into Knowz for AI enrichment, semantic search, and agent access.",
+  "description": "Connect your vault to Knowz for semantic search, vector retrieval, agentic RAG, and AI chat grounded in your own notes.",
   "author": "Knowz",
   "authorUrl": "https://knowz.io",
   "isDesktopOnly": false
