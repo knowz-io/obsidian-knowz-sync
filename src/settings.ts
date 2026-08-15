@@ -18,7 +18,10 @@ export const DEFAULT_SETTINGS: KnowzPluginSettings = {
   apiKey: "",
   vaultId: "",
   repositoryId: "",
-  excludeGlobs: [".obsidian/", ".trash/", ".smart-env/"],
+  // The config folder is excluded unconditionally by isExcluded() via Vault#configDir, so it
+  // is deliberately not listed here — a static ".obsidian/" would be wrong for any user who
+  // has relocated it.
+  excludeGlobs: [".trash/", ".smart-env/"],
   syncOnStartup: false,
   knownFiles: {},
   hasConfirmedFirstSync: false,
@@ -59,6 +62,15 @@ function globToRegExp(pattern: string): RegExp {
   return new RegExp(`^${source}$`, "i");
 }
 
+function isUnderDirectory(path: string, directory: string): boolean {
+  const normalized = directory.replace(/\/+$/, "").toLowerCase();
+  if (normalized === "") {
+    return false;
+  }
+  const lowerPath = path.toLowerCase();
+  return lowerPath === normalized || lowerPath.startsWith(`${normalized}/`);
+}
+
 /**
  * Whether a vault-relative path is excluded from syncing.
  *
@@ -67,8 +79,17 @@ function globToRegExp(pattern: string): RegExp {
  *    beneath it — this is the original behaviour and is preserved for existing installs;
  *  - a pattern containing `/` is anchored to the vault root (`Journal/secret.md`);
  *  - a pattern without `/` is matched against the file name in any folder (`*.private.md`).
+ *
+ * `configDir` should always be passed by callers that have a vault. Obsidian's configuration
+ * folder is usually `.obsidian` but the user can relocate it, and it holds every plugin's
+ * stored data — including, for plugins like this one, API credentials. It is therefore
+ * excluded unconditionally rather than relying on a default pattern the user could delete.
  */
-export function isExcluded(path: string, excludeGlobs: string[]): boolean {
+export function isExcluded(path: string, excludeGlobs: string[], configDir?: string): boolean {
+  if (configDir !== undefined && isUnderDirectory(path, configDir)) {
+    return true;
+  }
+
   return excludeGlobs.some((pattern) => {
     const trimmed = pattern.trim();
     if (trimmed === "") {

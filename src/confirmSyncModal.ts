@@ -51,8 +51,8 @@ export class ConfirmSyncModal extends Modal {
 
     contentEl.createEl("p", {
       text:
-        "Only .obsidian/, .trash/, .smart-env/, and anything you have excluded in settings " +
-        "are left out.",
+        `Only ${this.app.vault.configDir}/, .trash/, .smart-env/, and anything you have ` +
+        "excluded in settings are left out.",
     });
 
     new Setting(contentEl)

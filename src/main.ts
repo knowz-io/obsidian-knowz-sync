@@ -197,7 +197,7 @@ export default class KnowzSyncPlugin extends Plugin {
   private isSyncablePath(path: string): boolean {
     const lowerPath = path.toLowerCase();
     const isMarkdown = lowerPath.endsWith(".md") || lowerPath.endsWith(".markdown");
-    return isMarkdown && !isExcluded(path, this.settings.excludeGlobs);
+    return isMarkdown && !isExcluded(path, this.settings.excludeGlobs, this.app.vault.configDir);
   }
 
   private scheduleIncrementalSync(): void {
@@ -271,7 +271,9 @@ class KnowzSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Personal API key")
       .setDesc(
-        "Stored unencrypted in .obsidian/plugins/knowz-sync/data.json — use a non-admin API key with an expiry, and add that file to .gitignore if this vault is in git",
+        `Stored unencrypted in ${this.app.vault.configDir}/plugins/knowz-sync/data.json — use ` +
+          "a non-admin API key with an expiry, and add that file to .gitignore if this vault " +
+          "is in git",
       )
       .addText((text) => {
         text.inputEl.type = "password";
@@ -317,7 +319,7 @@ class KnowzSettingTab extends PluginSettingTab {
       .addTextArea((text) => {
         text.inputEl.rows = 8;
         text
-          .setPlaceholder(".obsidian/\n.trash/\n*.private.md")
+          .setPlaceholder(".trash/\nJournal/\n*.private.md")
           .setValue(this.plugin.settings.excludeGlobs.join("\n"))
           .onChange(async (value) => {
             this.plugin.settings.excludeGlobs = parseExcludePatterns(value);

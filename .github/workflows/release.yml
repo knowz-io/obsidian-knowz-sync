@@ -10,6 +10,10 @@ on:
 
 permissions:
   contents: write
+  # Artifact attestations let anyone cryptographically verify that the published main.js was
+  # built by this workflow from this repository, rather than uploaded by hand.
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -70,6 +74,11 @@ jobs:
 
       - name: Verify build output
         run: test -f main.js || { echo "::error::build did not emit main.js"; exit 1; }
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: main.js
 
       # main.js and manifest.json must be attached as INDIVIDUAL binary assets.
       # The auto-generated source zip does not satisfy the community directory.

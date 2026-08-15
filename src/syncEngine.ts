@@ -1,4 +1,5 @@
-import { Notice, type App, type TFile } from "obsidian";
+// TFile is a value import, not type-only: it is used for an instanceof narrowing check.
+import { Notice, TFile, type App } from "obsidian";
 import { contentHash } from "./hash";
 import {
   KnowzClient,
@@ -220,7 +221,8 @@ export class SyncEngine {
       const repositoryId = await this.ensureRepository();
       const markdownFiles = this.host.app.vault
         .getMarkdownFiles()
-        .filter((file) => !isExcluded(file.path, settings.excludeGlobs))
+        .filter((file) =>
+          !isExcluded(file.path, settings.excludeGlobs, this.host.app.vault.configDir))
         .sort((left, right) => left.path.localeCompare(right.path));
 
       if (isUnsafeFullSyncPlan(markdownFiles.length, Object.keys(settings.knownFiles).length)) {
@@ -279,7 +281,7 @@ export class SyncEngine {
           : file,
       );
       const relationships = buildRelationships(
-        this.host.app.metadataCache.resolvedLinks as ResolvedLinks,
+        this.host.app.metadataCache.resolvedLinks,
         new Set(Object.keys(current)),
       );
       const { total: result, unconfirmedPaths } = await this.pushBatches(
@@ -325,14 +327,13 @@ export class SyncEngine {
           continue;
         }
 
-        const abstractFile = this.host.app.vault.getAbstractFileByPath(change.path);
-        if (!abstractFile || !("extension" in abstractFile)) {
+        const file = this.host.app.vault.getAbstractFileByPath(change.path);
+        if (!(file instanceof TFile)) {
           files.push({ path: change.oldPath ?? change.path, action: 2 });
           delete nextKnown[change.oldPath ?? change.path];
           continue;
         }
 
-        const file = abstractFile as TFile;
         const content = await this.host.app.vault.cachedRead(file);
         const hash = await contentHash(content);
         const knownPath = change.action === 3 && change.oldPath
@@ -363,9 +364,9 @@ export class SyncEngine {
 
       const syncedFiles = this.host.app.vault
         .getMarkdownFiles()
-        .filter((file) => !isExcluded(file.path, settings.excludeGlobs));
+        .filter((file) => !isExcluded(file.path, settings.excludeGlobs, this.host.app.vault.configDir));
       const relationships = buildRelationships(
-        this.host.app.metadataCache.resolvedLinks as ResolvedLinks,
+        this.host.app.metadataCache.resolvedLinks,
         new Set(syncedFiles.map((file) => file.path)),
       ).filter((relationship) => changedSources.has(relationship.sourcePath));
       const { total: result, unconfirmedPaths } = await this.pushBatches(

@@ -18,7 +18,8 @@ how your notes connect, because it inherits your `[[wikilinks]]`.
   and pushed in a coalesced batch, so a burst of edits becomes one upload rather than fifty.
 - **Titles notes the way you'd expect.** Front-matter `title` wins, then a leading H1, then
   the filename.
-- **Stays out of the way.** `.obsidian/`, `.trash/`, and `.smart-env/` are excluded by default,
+- **Stays out of the way.** Your Obsidian configuration folder, `.trash/`, and `.smart-env/`
+  are excluded automatically,
   and note content is transmitted verbatim — no rewriting, no reformatting.
 
 ## Requirements
@@ -70,7 +71,8 @@ To see exactly what would be sent at any time, run **Preview which notes would s
 
 ### Excluding notes
 
-`.obsidian/`, `.trash/`, and `.smart-env/` are excluded out of the box. Add your own patterns
+Your Obsidian configuration folder (normally `.obsidian/`, wherever you have it), `.trash/`,
+and `.smart-env/` are excluded automatically. Add your own patterns
 under **Excluded paths**, one per line:
 
 | Pattern | Matches |
@@ -126,9 +128,13 @@ vault, the name of your vault, a SHA-256 hash of each note's content used to det
 and the pairs of notes connected by your wikilinks. This is the payload the feature requires:
 the notes are what gets indexed, and the link pairs are what becomes the graph.
 
-**What is not transmitted.** Non-Markdown files and attachments, anything under `.obsidian/`,
+**What is not transmitted.** Non-Markdown files and attachments, anything under your Obsidian
+configuration folder,
 `.trash/`, or `.smart-env/`, and anything outside your Obsidian vault. The plugin reads no file
 outside the vault and uses no Node.js or Electron API.
+
+Your Obsidian configuration folder is excluded unconditionally and cannot be re-included, since
+it holds every plugin's stored data — including credentials.
 
 **Everything else in the vault is synced**, minus whatever you add under **Excluded paths**.
 The plugin shows you the count and the destination before the first upload, and the **Preview

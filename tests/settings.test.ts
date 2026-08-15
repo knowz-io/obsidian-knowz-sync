@@ -20,9 +20,40 @@ describe("isExcluded", () => {
   });
 
   it("applies every default exclusion", () => {
-    for (const path of [".obsidian/app.json", ".trash/x.md", ".smart-env/y.json"]) {
+    for (const path of [".trash/x.md", ".smart-env/y.json"]) {
       expect(isExcluded(path, DEFAULT_SETTINGS.excludeGlobs)).toBe(true);
     }
+  });
+
+  // The config folder holds every plugin's stored data, including credentials. It is usually
+  // .obsidian but the user can relocate it, so it must come from Vault#configDir rather than a
+  // hardcoded default the user could also delete from their exclusion list.
+  describe("Obsidian config folder", () => {
+    it("is excluded via configDir even when no pattern mentions it", () => {
+      expect(isExcluded(".obsidian/plugins/x/data.json", [], ".obsidian")).toBe(true);
+    });
+
+    it("is excluded when the user has relocated it", () => {
+      expect(isExcluded(".my-config/plugins/x/data.json", [], ".my-config")).toBe(true);
+      // and the old default no longer protects anything it should not
+      expect(isExcluded(".obsidian/plugins/x/data.json", [], ".my-config")).toBe(false);
+    });
+
+    it("cannot be re-included by clearing the exclusion list", () => {
+      expect(isExcluded(".obsidian/app.json", [], ".obsidian")).toBe(true);
+    });
+
+    it("tolerates a trailing slash and differing case", () => {
+      expect(isExcluded(".Obsidian/app.json", [], ".obsidian/")).toBe(true);
+    });
+
+    it("does not over-match a sibling folder with the same prefix", () => {
+      expect(isExcluded(".obsidian-backup/notes.md", [], ".obsidian")).toBe(false);
+    });
+
+    it("is inert when no configDir is supplied", () => {
+      expect(isExcluded(".obsidian/app.json", [])).toBe(false);
+    });
   });
 
   // The bug this fixes: the field was named excludeGlobs and did prefix matching, so a

@@ -1,7 +1,7 @@
 {
   "id": "knowz-sync",
   "name": "Knowz Sync",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minAppVersion": "1.4.0",
   "description": "Sync notes and backlinks one way into Knowz for AI enrichment, semantic search, and agent access.",
   "author": "Knowz",
