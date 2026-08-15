@@ -157,6 +157,71 @@ describe("KnowzClient", () => {
     );
   });
 
+  it("lists accessible vaults through the authenticated vault endpoint", async () => {
+    requestUrlMock.mockResolvedValueOnce({
+      status: 200,
+      json: { success: true, data: [
+        { id: "vault-2", name: "Work", displayName: "Work" },
+        { id: "vault-1", name: "General", displayName: "General" },
+      ] },
+    } as never);
+    const client = new KnowzClient({ apiBaseUrl: "https://api.example.test", apiKey: "ukz_test" });
+
+    await expect(client.listVaults()).resolves.toEqual([
+      { id: "vault-1", name: "General" },
+      { id: "vault-2", name: "Work" },
+    ]);
+    expect(requestUrlMock).toHaveBeenCalledWith({
+      url: "https://api.example.test/api/v1/vaults",
+      method: "GET",
+      headers: { "X-Api-Key": "ukz_test" },
+      throw: false,
+    });
+  });
+
+  it("creates a vault with an explicit Obsidian description", async () => {
+    requestUrlMock.mockResolvedValueOnce({
+      status: 200,
+      json: { success: true, data: { id: "vault-new", name: "Research" } },
+    } as never);
+    const client = new KnowzClient({ apiBaseUrl: "https://api.example.test", apiKey: "ukz_test" });
+
+    await expect(client.createVault("Research")).resolves.toEqual({ id: "vault-new", name: "Research" });
+    expect(requestUrlMock).toHaveBeenCalledWith(expect.objectContaining({
+      url: "https://api.example.test/api/v1/vaults",
+      method: "POST",
+      body: JSON.stringify({
+        name: "Research",
+        displayName: "Research",
+        description: "Created by Knowz Sync for Obsidian",
+      }),
+    }));
+  });
+
+  it("validates the minted key and returns the connected tenant identity", async () => {
+    requestUrlMock.mockResolvedValueOnce({
+      status: 200,
+      json: {
+        success: true,
+        data: {
+          isValid: true,
+          tenant: { tenantId: "tenant-guid", name: "Knowz Dev" },
+        },
+      },
+    } as never);
+    const client = new KnowzClient({ apiBaseUrl: "https://api.example.test", apiKey: "ukz_test" });
+
+    await expect(client.getConnectionInfo()).resolves.toEqual({
+      tenantId: "tenant-guid",
+      tenantName: "Knowz Dev",
+    });
+    expect(requestUrlMock).toHaveBeenCalledWith(expect.objectContaining({
+      url: "https://api.example.test/api/v1/auth/validate-key",
+      method: "POST",
+      body: JSON.stringify({ apiKey: "ukz_test" }),
+    }));
+  });
+
   it("retries a failed push once after two seconds", async () => {
     vi.useFakeTimers();
     requestUrlMock

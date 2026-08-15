@@ -1,6 +1,9 @@
 export interface KnowzPluginSettings {
   apiBaseUrl: string;
   apiKey: string;
+  accountName?: string;
+  tenantName?: string;
+  vaultName?: string;
   vaultId: string;
   repositoryId: string;
   excludeGlobs: string[];
@@ -16,6 +19,9 @@ export interface KnowzPluginSettings {
 export const DEFAULT_SETTINGS: KnowzPluginSettings = {
   apiBaseUrl: "https://api.knowz.io",
   apiKey: "",
+  accountName: "",
+  tenantName: "",
+  vaultName: "",
   vaultId: "",
   repositoryId: "",
   // The config folder is excluded unconditionally by isExcluded() via Vault#configDir, so it

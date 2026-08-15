@@ -3,12 +3,15 @@ import {
   Notice,
   Plugin,
   PluginSettingTab,
+  requestUrl,
   TFile,
   type SettingDefinitionItem,
   type TAbstractFile,
 } from "obsidian";
 import { InvalidApiUrlError, isTrustedKnowzHost, normalizeApiBaseUrl } from "./apiUrl";
 import { confirmFirstSync } from "./confirmSyncModal";
+import { runObsidianDeviceCodeFlow } from "./deviceAuth";
+import { KnowzClient, type KnowzVault } from "./knowzClient";
 import {
   DEFAULT_SETTINGS,
   isExcluded,
@@ -24,6 +27,7 @@ export default class KnowzSyncPlugin extends Plugin {
   private readonly changeQueue = new ChangeQueue();
   private debounceTimer: number | null = null;
   private watchersRegistered = false;
+  private availableVaults: KnowzVault[] = [];
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -106,6 +110,140 @@ export default class KnowzSyncPlugin extends Plugin {
       return;
     }
     await this.syncEngine.runFullSync();
+  }
+
+  async connectToKnowz(): Promise<void> {
+    try {
+      const result = await runObsidianDeviceCodeFlow(
+        this.settings.apiBaseUrl,
+        this.app.vault.getName(),
+        {
+          request: async (request) => {
+            const response = await requestUrl(request);
+            return {
+              status: response.status,
+              json: (response.json ?? {}) as Record<string, unknown>,
+            };
+          },
+          sleep: (milliseconds) => new Promise<void>((resolve) => {
+            window.setTimeout(resolve, milliseconds);
+          }),
+          now: () => Date.now(),
+          openBrowser: (url) => {
+            window.open(url, "_blank", "noopener,noreferrer");
+          },
+          showCode: (code, verificationUri) => {
+            new Notice(`Knowz sign-in code: ${code}. If the browser does not open, visit ${verificationUri}.`, 15_000);
+          },
+        },
+      );
+
+      // Persist the only copy of the credential before any follow-up request. The key is
+      // deliberately never included in a URL, Notice, or log message.
+      this.settings.apiKey = result.apiKey;
+      this.settings.accountName = result.accountName ?? "";
+      this.settings.tenantName = "";
+      this.settings.vaultId = "";
+      this.settings.vaultName = "";
+      this.settings.repositoryId = "";
+      this.settings.knownFiles = {};
+      this.settings.hasConfirmedFirstSync = false;
+      await this.saveSettings();
+
+      const client = this.client();
+      try {
+        const connection = await client.getConnectionInfo();
+        this.settings.tenantName = connection.tenantName;
+      } catch (error) {
+        new Notice(`Connected to Knowz, but account details could not be loaded: ${messageOf(error)}`);
+      }
+      try {
+        await this.refreshVaults();
+      } catch (error) {
+        new Notice(`Connected to Knowz, but vaults could not be loaded: ${messageOf(error)}`);
+      }
+      await this.saveSettings();
+      new Notice("Knowz connected. Choose a vault to finish setup.");
+    } catch (error) {
+      new Notice(`Knowz connection failed: ${messageOf(error)}`);
+    }
+  }
+
+  async refreshVaults(): Promise<void> {
+    if (!this.settings.apiKey.trim()) {
+      this.availableVaults = [];
+      return;
+    }
+    this.availableVaults = await this.client().listVaults();
+    const selected = this.availableVaults.find((vault) => vault.id === this.settings.vaultId);
+    if (selected) {
+      this.settings.vaultName = selected.name;
+      await this.saveSettings();
+    }
+  }
+
+  vaultOptions(): Record<string, string> {
+    const options: Record<string, string> = { "": "Choose a vault…" };
+    if (this.settings.vaultId && !this.availableVaults.some((vault) => vault.id === this.settings.vaultId)) {
+      options[this.settings.vaultId] = this.settings.vaultName?.trim() || this.settings.vaultId;
+    }
+    for (const vault of this.availableVaults) {
+      options[vault.id] = vault.name;
+    }
+    options.__create__ = "Create new vault…";
+    return options;
+  }
+
+  async selectVault(selection: string): Promise<void> {
+    let vault: KnowzVault | undefined;
+    if (selection === "__create__") {
+      const requestedName = window.prompt("Name for the new Knowz vault", this.app.vault.getName());
+      if (requestedName === null || requestedName.trim() === "") {
+        return;
+      }
+      vault = await this.client().createVault(requestedName);
+      this.availableVaults = [...this.availableVaults, vault]
+        .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+    } else {
+      vault = this.availableVaults.find((candidate) => candidate.id === selection);
+      if (!vault && selection) {
+        vault = { id: selection, name: this.settings.vaultName?.trim() || selection };
+      }
+    }
+
+    this.settings.vaultId = vault?.id ?? "";
+    this.settings.vaultName = vault?.name ?? "";
+    this.settings.repositoryId = "";
+    this.settings.knownFiles = {};
+    this.settings.hasConfirmedFirstSync = false;
+    await this.saveSettings();
+    if (vault) {
+      await this.syncEngine.initializeRepository();
+      new Notice(`Knowz vault selected: ${vault.name}.`);
+    }
+  }
+
+  async disconnectFromKnowz(): Promise<void> {
+    this.settings.apiKey = "";
+    this.settings.accountName = "";
+    this.settings.tenantName = "";
+    this.settings.vaultId = "";
+    this.settings.vaultName = "";
+    this.settings.repositoryId = "";
+    this.settings.knownFiles = {};
+    this.settings.hasConfirmedFirstSync = false;
+    this.availableVaults = [];
+    await this.saveSettings();
+    new Notice(
+      "Disconnected locally. To revoke the key on the server, open Knowz Settings → API keys.",
+    );
+  }
+
+  private client(): KnowzClient {
+    return new KnowzClient({
+      apiBaseUrl: this.settings.apiBaseUrl,
+      apiKey: this.settings.apiKey,
+    });
   }
 
   /** Notes that the current exclusion settings would upload. */
@@ -251,7 +389,11 @@ export class KnowzSettingTab extends PluginSettingTab {
     const syncable = this.plugin.syncablePaths().length;
     const total = this.plugin.app.vault.getMarkdownFiles().length;
 
-    return [
+    const advanced: SettingDefinitionItem = {
+      type: "page",
+      name: "Advanced manual setup",
+      desc: "Self-hosted endpoint and manual credential fields",
+      items: [
       {
         name: "API base URL",
         desc: "The Knowz API URL, such as https://api.knowz.io",
@@ -293,6 +435,8 @@ export class KnowzSettingTab extends PluginSettingTab {
               .setValue(this.plugin.settings.apiKey)
               .onChange(async (value) => {
                 this.plugin.settings.apiKey = value.trim();
+                this.plugin.settings.accountName = "";
+                this.plugin.settings.tenantName = "";
                 // A render callback is outside the automatic control binding, so this has
                 // to persist explicitly.
                 await this.plugin.saveSettings();
@@ -306,6 +450,10 @@ export class KnowzSettingTab extends PluginSettingTab {
         aliases: ["destination", "workspace", "guid", "target"],
         control: { type: "text", key: "vaultId" },
       },
+      ],
+    };
+
+    const syncDefinitions: SettingDefinitionItem[] = [
       {
         name: "Sync on startup",
         desc: "Run a full sync whenever Obsidian starts",
@@ -349,6 +497,72 @@ export class KnowzSettingTab extends PluginSettingTab {
         ],
       },
     ];
+
+    if (!this.plugin.settings.apiKey.trim()) {
+      return [
+        {
+          name: "Connect to Knowz",
+          desc: "Sign in in your browser, then return here to choose a Knowz vault",
+          aliases: ["connect", "sign in", "login", "authorize", "account"],
+          render: (setting) => {
+            setting.addButton((button) => button
+              .setButtonText("Connect to Knowz")
+              .setCta()
+              .onClick(async () => {
+                await this.plugin.connectToKnowz();
+                this.update();
+              }));
+          },
+        },
+        advanced,
+        ...syncDefinitions,
+      ];
+    }
+
+    const identity = [this.plugin.settings.accountName, this.plugin.settings.tenantName]
+      .filter((part) => part?.trim())
+      .join(" · ") || "Connected to Knowz";
+    return [
+      {
+        name: "Connected account",
+        desc: identity,
+        aliases: ["account", "tenant", "workspace", "identity", "signed in"],
+      },
+      {
+        name: "Knowz vault",
+        desc: "Choose where this Obsidian vault syncs, or create a new Knowz vault",
+        aliases: ["vault", "destination", "workspace", "create", "target"],
+        control: { type: "dropdown", key: "selectedVaultId", options: this.plugin.vaultOptions() },
+      },
+      {
+        name: "Refresh vault list",
+        desc: "Reload the Knowz vaults available to this account",
+        aliases: ["reload", "refresh", "vaults", "update"],
+        render: (setting) => {
+          setting.addButton((button) => button.setButtonText("Refresh").onClick(async () => {
+            try {
+              await this.plugin.refreshVaults();
+              this.update();
+            } catch (error) {
+              new Notice(`Could not refresh Knowz vaults: ${messageOf(error)}`);
+            }
+          }));
+        },
+      },
+      {
+        name: "Disconnect",
+        desc: "Clear the local key and vault binding; this does not revoke the server-side key",
+        aliases: ["disconnect", "sign out", "logout", "revoke", "remove account"],
+        render: (setting) => {
+          setting.addButton((button) => button.setButtonText("Disconnect").onClick(async () => {
+            await this.plugin.disconnectFromKnowz();
+            this.update();
+          }));
+        },
+      },
+      advanced,
+      ...syncDefinitions,
+    ];
   }
 
   /**
@@ -361,6 +575,8 @@ export class KnowzSettingTab extends PluginSettingTab {
       case "apiBaseUrl":
         return this.plugin.settings.apiBaseUrl;
       case "vaultId":
+        return this.plugin.settings.vaultId;
+      case "selectedVaultId":
         return this.plugin.settings.vaultId;
       case "syncOnStartup":
         return this.plugin.settings.syncOnStartup;
@@ -399,7 +615,13 @@ export class KnowzSettingTab extends PluginSettingTab {
       }
       case "vaultId":
         this.plugin.settings.vaultId = String(value).trim();
+        this.plugin.settings.vaultName = "";
+        this.plugin.settings.repositoryId = "";
         break;
+      case "selectedVaultId":
+        await this.plugin.selectVault(String(value));
+        this.update();
+        return;
       case "syncOnStartup":
         this.plugin.settings.syncOnStartup = Boolean(value);
         break;
@@ -422,4 +644,8 @@ function hostOrNull(raw: string): string | null {
   } catch {
     return null;
   }
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

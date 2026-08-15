@@ -35,6 +35,16 @@ export interface GitFileManifest {
   totalCount: number;
 }
 
+export interface KnowzVault {
+  id: string;
+  name: string;
+}
+
+export interface KnowzConnectionInfo {
+  tenantId: string;
+  tenantName: string;
+}
+
 type ApiEnvelope<T> = {
   success?: boolean;
   data?: T;
@@ -134,6 +144,48 @@ export class KnowzClient {
 
   async getFileManifest(repositoryId: string): Promise<GitFileManifest> {
     return this.get<GitFileManifest>(`/api/v1/git/${repositoryId}/files`);
+  }
+
+  async listVaults(): Promise<KnowzVault[]> {
+    const vaults = await this.get<Array<{ id: string; name: string; displayName?: string }>>(
+      "/api/v1/vaults",
+    );
+    return vaults
+      .map((vault) => ({
+        id: vault.id,
+        name: vault.displayName?.trim() || vault.name,
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+  }
+
+  async createVault(name: string): Promise<KnowzVault> {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new KnowzApiError("Enter a name for the new vault");
+    }
+    const vault = await this.post<{ id: string; name: string; displayName?: string }>(
+      "/api/v1/vaults",
+      {
+        name: trimmed,
+        displayName: trimmed,
+        description: "Created by Knowz Sync for Obsidian",
+      },
+    );
+    return { id: vault.id, name: vault.displayName?.trim() || vault.name };
+  }
+
+  async getConnectionInfo(): Promise<KnowzConnectionInfo> {
+    const result = await this.post<{
+      isValid?: boolean;
+      tenant?: { tenantId?: string; name?: string };
+    }>("/api/v1/auth/validate-key", { apiKey: this.apiKey });
+    if (!result.isValid || !result.tenant?.tenantId || !result.tenant.name?.trim()) {
+      throw new KnowzApiError("Knowz returned an incomplete account identity");
+    }
+    return {
+      tenantId: result.tenant.tenantId,
+      tenantName: result.tenant.name.trim(),
+    };
   }
 
   private async get<T>(path: string): Promise<T> {

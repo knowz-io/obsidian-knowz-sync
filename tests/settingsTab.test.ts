@@ -6,7 +6,14 @@ import type {
   SettingDefinitionItem,
 } from "obsidian";
 import KnowzSyncPlugin, { KnowzSettingTab } from "../src/main";
-import { Setting } from "./mocks/obsidian";
+import { runObsidianDeviceCodeFlow } from "../src/deviceAuth";
+import { KnowzClient } from "../src/knowzClient";
+import { SyncEngine } from "../src/syncEngine";
+import { noticeMessages, Setting } from "./mocks/obsidian";
+
+vi.mock("../src/deviceAuth", () => ({ runObsidianDeviceCodeFlow: vi.fn() }));
+
+const deviceAuthMock = vi.mocked(runObsidianDeviceCodeFlow);
 
 /**
  * The settings tab is declarative as of plugin 1.0.7: Obsidian renders it from
@@ -45,7 +52,7 @@ function makeTab(saved: Record<string, unknown> = {}, markdownFiles: string[] = 
 function flatten(items: SettingDefinitionItem[]): SettingDefinition[] {
   const leaves: SettingDefinition[] = [];
   for (const item of items) {
-    if ("type" in item && (item.type === "group" || item.type === "list")) {
+    if ("type" in item && (item.type === "group" || item.type === "list" || item.type === "page")) {
       leaves.push(...flatten((item.items ?? []) as SettingDefinitionItem[]));
     } else {
       leaves.push(item as SettingDefinition);
@@ -80,6 +87,7 @@ describe("declarative settings definitions", () => {
     const names = flatten(tab.getSettingDefinitions()).map((definition) => definition.name);
 
     expect(names).toEqual([
+      "Connect to Knowz",
       "API base URL",
       "Personal API key",
       "Vault ID",
@@ -144,6 +152,128 @@ describe("declarative settings definitions", () => {
     setting.buttons[0].clickHandler();
 
     expect(updateCountOf(tab)).toBe(1);
+  });
+});
+
+describe("native Knowz onboarding", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    deviceAuthMock.mockReset();
+    noticeMessages.length = 0;
+  });
+
+  it("connects without copying a credential and populates the vault picker", async () => {
+    const { plugin, tab } = makeTab();
+    await plugin.loadSettings();
+    await plugin.onload();
+    deviceAuthMock.mockResolvedValue({ apiKey: `ukz_${"a".repeat(32)}`, accountName: "Alex" });
+    vi.spyOn(KnowzClient.prototype, "getConnectionInfo").mockResolvedValue({
+      tenantId: "tenant-guid",
+      tenantName: "Knowz Dev",
+    });
+    vi.spyOn(KnowzClient.prototype, "listVaults").mockResolvedValue([
+      { id: "vault-1", name: "General" },
+      { id: "vault-2", name: "Research" },
+    ]);
+
+    const connect = flatten(tab.getSettingDefinitions()).find(
+      (definition) => definition.name === "Connect to Knowz",
+    );
+    const setting = new Setting();
+    renderOf(connect)(setting);
+    await setting.buttons[0].clickHandler();
+
+    expect(deviceAuthMock).toHaveBeenCalledWith(
+      "https://api.knowz.io",
+      "TestVault",
+      expect.objectContaining({
+        request: expect.any(Function),
+        sleep: expect.any(Function),
+        openBrowser: expect.any(Function),
+      }),
+    );
+    expect(plugin.settings).toMatchObject({
+      apiKey: `ukz_${"a".repeat(32)}`,
+      accountName: "Alex",
+      tenantName: "Knowz Dev",
+    });
+    const vault = flatten(tab.getSettingDefinitions()).find(
+      (definition) => definition.name === "Knowz vault",
+    ) as unknown as { control: { options: Record<string, string> } };
+    expect(vault.control.options).toEqual({
+      "": "Choose a vault…",
+      "vault-1": "General",
+      "vault-2": "Research",
+      __create__: "Create new vault…",
+    });
+    expect(noticeMessages.join(" ")).not.toContain(`ukz_${"a".repeat(32)}`);
+  });
+
+  it("initializes the CLI repository when a vault is selected", async () => {
+    const { plugin, tab } = makeTab({
+      apiKey: `ukz_${"a".repeat(32)}`,
+      accountName: "Alex",
+      tenantName: "Knowz Dev",
+    });
+    await plugin.loadSettings();
+    await plugin.onload();
+    vi.spyOn(KnowzClient.prototype, "listVaults").mockResolvedValue([
+      { id: "vault-1", name: "General" },
+    ]);
+    await plugin.refreshVaults();
+    const init = vi.spyOn(SyncEngine.prototype, "initializeRepository").mockResolvedValue("repo-1");
+
+    await tab.setControlValue("selectedVaultId", "vault-1");
+
+    expect(plugin.settings).toMatchObject({ vaultId: "vault-1", vaultName: "General" });
+    expect(init).toHaveBeenCalledOnce();
+  });
+
+  it("creates a vault from the picker and initializes it", async () => {
+    const { plugin, tab } = makeTab({ apiKey: `ukz_${"a".repeat(32)}` });
+    await plugin.loadSettings();
+    await plugin.onload();
+    const prompt = vi.fn(() => "Research");
+    Object.defineProperty(window, "prompt", { configurable: true, value: prompt });
+    vi.spyOn(KnowzClient.prototype, "createVault").mockResolvedValue({
+      id: "vault-new",
+      name: "Research",
+    });
+    const init = vi.spyOn(SyncEngine.prototype, "initializeRepository").mockResolvedValue("repo-new");
+
+    await tab.setControlValue("selectedVaultId", "__create__");
+
+    expect(prompt).toHaveBeenCalledWith("Name for the new Knowz vault", "TestVault");
+    expect(plugin.settings).toMatchObject({ vaultId: "vault-new", vaultName: "Research" });
+    expect(init).toHaveBeenCalledOnce();
+  });
+
+  it("disconnects locally, resets sync identity, and explains server-side revocation", async () => {
+    const { plugin, tab } = makeTab({
+      apiKey: `ukz_${"a".repeat(32)}`,
+      vaultId: "vault-1",
+      repositoryId: "repo-1",
+      knownFiles: { "note.md": "hash" },
+      hasConfirmedFirstSync: true,
+    });
+    await plugin.loadSettings();
+    await plugin.onload();
+
+    const disconnect = flatten(tab.getSettingDefinitions()).find(
+      (definition) => definition.name === "Disconnect",
+    );
+    const setting = new Setting();
+    renderOf(disconnect)(setting);
+    await setting.buttons[0].clickHandler();
+
+    expect(plugin.settings).toMatchObject({
+      apiKey: "",
+      vaultId: "",
+      repositoryId: "",
+      knownFiles: {},
+      hasConfirmedFirstSync: false,
+    });
+    expect(noticeMessages.join(" ")).toContain("revoke");
   });
 });
 
