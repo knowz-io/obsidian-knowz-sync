@@ -1,4 +1,13 @@
-import { App, Notice, Plugin, PluginSettingTab, Setting, TFile, type TAbstractFile } from "obsidian";
+import {
+  App,
+  Notice,
+  Plugin,
+  PluginSettingTab,
+  Setting,
+  TFile,
+  type SettingDefinitionItem,
+  type TAbstractFile,
+} from "obsidian";
 import { InvalidApiUrlError, isTrustedKnowzHost, normalizeApiBaseUrl } from "./apiUrl";
 import { confirmFirstSync } from "./confirmSyncModal";
 import {
@@ -229,6 +238,80 @@ export default class KnowzSyncPlugin extends Plugin {
 class KnowzSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: KnowzSyncPlugin) {
     super(app, plugin);
+  }
+
+  /**
+   * Declarative descriptions of every setting, so they are indexed by Obsidian's settings
+   * search on app 1.13.0 and later. The base class calls this when the tab is registered,
+   * independently of display().
+   *
+   * Rendering still happens in display() below rather than from these definitions, for two
+   * reasons: minAppVersion is 1.4.0 and this API does not exist before 1.13.0, and the
+   * declarative text control has no masked variant — rendering the API key through it would
+   * put a credential on screen in clear text.
+   */
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [
+      {
+        name: "API base URL",
+        desc: "The Knowz API URL, such as https://api.knowz.io",
+        aliases: ["endpoint", "server", "host", "self-hosted"],
+        control: { type: "text", key: "apiBaseUrl", placeholder: "https://api.knowz.io" },
+      },
+      {
+        name: "Personal API key",
+        desc: "An expiring, non-admin key beginning ukz_",
+        aliases: ["token", "credential", "authentication", "sign in"],
+        control: { type: "text", key: "apiKey", placeholder: "ukz_…" },
+      },
+      {
+        name: "Vault ID",
+        desc: "The destination Knowz vault GUID",
+        aliases: ["destination", "workspace"],
+        control: { type: "text", key: "vaultId" },
+      },
+      {
+        name: "Sync on startup",
+        desc: "Run a full sync whenever Obsidian starts",
+        aliases: ["automatic", "launch"],
+        control: { type: "toggle", key: "syncOnStartup" },
+      },
+      {
+        type: "group",
+        heading: "What gets synced",
+        items: [
+          {
+            name: "Excluded paths",
+            desc: "Folders and file patterns to keep out of Knowz, one per line",
+            aliases: ["exclude", "ignore", "privacy", "glob", "filter", "skip"],
+            control: { type: "textarea", key: "excludeGlobs", rows: 8 },
+          },
+        ],
+      },
+    ];
+  }
+
+  /** excludeGlobs is stored as an array but presented as one pattern per line. */
+  getControlValue(key: string): unknown {
+    if (key === "excludeGlobs") {
+      return this.plugin.settings.excludeGlobs.join("\n");
+    }
+    return super.getControlValue(key);
+  }
+
+  async setControlValue(key: string, value: unknown): Promise<void> {
+    if (key === "excludeGlobs") {
+      this.plugin.settings.excludeGlobs = parseExcludePatterns(String(value));
+      await this.plugin.saveSettings();
+      return;
+    }
+    if (key === "apiBaseUrl") {
+      // Never persist a URL the client would reject at request time.
+      this.plugin.settings.apiBaseUrl = normalizeApiBaseUrl(String(value));
+      await this.plugin.saveSettings();
+      return;
+    }
+    await super.setControlValue(key, value);
   }
 
   display(): void {
