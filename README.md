@@ -1,4 +1,4 @@
-# Knowz for Obsidian
+# Knowz Sync for Obsidian
 
 Your vault is already the best record of what you know. This connects it to
 [Knowz](https://knowz.io) and turns it into something you can *ask*.
@@ -53,7 +53,7 @@ your vault there and keep it current:
 
 ### From the Obsidian community directory
 
-Not yet listed. Until it is, use one of the methods below.
+Open **Settings → Community plugins → Browse**, search for **Knowz Sync**, and install.
 
 ### Using BRAT
 
@@ -82,7 +82,7 @@ Open **Settings → Knowz Sync**:
 | **Sync on startup** | Run a full sync each time Obsidian launches. Off by default. |
 | **Excluded paths** | Folders and file patterns to keep out of Knowz. One per line. |
 
-Then run a sync from the ribbon icon or the **Sync vault to Knowz** command. Before the first
+Then run a sync from the ribbon icon or the **Sync vault** command. Before the first
 upload the plugin tells you how many notes it is about to send and where, and waits for you to
 agree. Nothing leaves your vault until you do.
 
