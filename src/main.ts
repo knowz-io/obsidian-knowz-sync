@@ -9,6 +9,7 @@ import {
   type TAbstractFile,
 } from "obsidian";
 import { InvalidApiUrlError, isTrustedKnowzHost, normalizeApiBaseUrl } from "./apiUrl";
+import { openApprovalUrl } from "./browserLauncher";
 import { confirmFirstSync } from "./confirmSyncModal";
 import { runObsidianDeviceCodeFlow } from "./deviceAuth";
 import { KnowzClient, type KnowzVault } from "./knowzClient";
@@ -30,6 +31,7 @@ export default class KnowzSyncPlugin extends Plugin {
   private watchersRegistered = false;
   private pullDetectionRegistered = false;
   private availableVaults: KnowzVault[] = [];
+  private knowzSettingTab?: KnowzSettingTab;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -66,7 +68,8 @@ export default class KnowzSyncPlugin extends Plugin {
         void this.reviewRemoteChanges();
       },
     });
-    this.addSettingTab(new KnowzSettingTab(this.app, this));
+    this.knowzSettingTab = new KnowzSettingTab(this.app, this);
+    this.addSettingTab(this.knowzSettingTab);
 
     // Vault watchers and the startup sync must wait for the workspace layout. Before it is
     // ready, getMarkdownFiles() reports an empty vault and the initial index replays a
@@ -167,7 +170,7 @@ export default class KnowzSyncPlugin extends Plugin {
           }),
           now: () => Date.now(),
           openBrowser: (url) => {
-            window.open(url, "_blank", "noopener,noreferrer");
+            openApprovalUrl(url);
           },
           showCode: (code, verificationUri) => {
             new Notice(`Knowz sign-in code: ${code}. If the browser does not open, visit ${verificationUri}.`, 15_000);
@@ -200,6 +203,7 @@ export default class KnowzSyncPlugin extends Plugin {
         new Notice(`Connected to Knowz, but vaults could not be loaded: ${messageOf(error)}`);
       }
       await this.saveSettings();
+      this.knowzSettingTab?.update();
       new Notice("Knowz connected. Choose a vault to finish setup.");
     } catch (error) {
       new Notice(`Knowz connection failed: ${messageOf(error)}`);
@@ -571,7 +575,6 @@ export class KnowzSettingTab extends PluginSettingTab {
               .setCta()
               .onClick(async () => {
                 await this.plugin.connectToKnowz();
-                this.update();
               }));
           },
         },

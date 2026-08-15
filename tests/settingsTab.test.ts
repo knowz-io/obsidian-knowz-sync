@@ -209,6 +209,27 @@ describe("native Knowz onboarding", () => {
     expect(noticeMessages.join(" ")).not.toContain(`ukz_${"a".repeat(32)}`);
   });
 
+  it("refreshes the registered settings tab after a keyboard-command connection", async () => {
+    const { plugin } = makeTab();
+    await plugin.loadSettings();
+    await plugin.onload();
+    deviceAuthMock.mockResolvedValue({ apiKey: `ukz_${"a".repeat(32)}`, accountName: "Alex" });
+    vi.spyOn(KnowzClient.prototype, "getConnectionInfo").mockResolvedValue({
+      tenantId: "tenant-guid",
+      tenantName: "Knowz Dev",
+    });
+    vi.spyOn(KnowzClient.prototype, "listVaults").mockResolvedValue([
+      { id: "vault-1", name: "General" },
+    ]);
+
+    await plugin.connectToKnowz();
+
+    const registeredTab = (plugin as unknown as { knowzSettingTab: KnowzSettingTab }).knowzSettingTab;
+    expect(updateCountOf(registeredTab)).toBe(1);
+    expect(flatten(registeredTab.getSettingDefinitions()).map((definition) => definition.name))
+      .toContain("Knowz vault");
+  });
+
   it("initializes the CLI repository when a vault is selected", async () => {
     const { plugin, tab } = makeTab({
       apiKey: `ukz_${"a".repeat(32)}`,
