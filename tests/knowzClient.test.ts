@@ -236,7 +236,7 @@ describe("KnowzClient", () => {
       body: JSON.stringify({
         name: "Research",
         displayName: "Research",
-        description: "Created by Knowz Sync for Obsidian",
+        description: "Created by Knowz AI Sync for Obsidian",
       }),
     }));
   });

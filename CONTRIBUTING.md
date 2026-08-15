@@ -1,4 +1,4 @@
-# Contributing to Knowz Sync
+# Contributing to Knowz AI Sync
 
 Thanks for taking an interest. Bug reports and pull requests are both welcome.
 

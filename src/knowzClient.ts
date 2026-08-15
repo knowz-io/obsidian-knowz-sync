@@ -188,7 +188,7 @@ export class KnowzClient {
       {
         name: trimmed,
         displayName: trimmed,
-        description: "Created by Knowz Sync for Obsidian",
+        description: "Created by Knowz AI Sync for Obsidian",
       },
     );
     return { id: vault.id, name: vault.displayName?.trim() || vault.name };

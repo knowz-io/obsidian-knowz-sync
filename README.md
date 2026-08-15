@@ -1,4 +1,4 @@
-# Knowz Sync for Obsidian
+# Knowz AI Sync for Obsidian
 
 Your vault is already the best record of what you know. This connects it to
 [Knowz](https://knowz.io) and turns it into something you can *ask*.
@@ -51,7 +51,7 @@ your vault there and keep it current:
 
 ## Getting a Knowz account
 
-You can create or sign into a Knowz account from the plugin. Open **Settings → Knowz Sync**,
+You can create or sign into a Knowz account from the plugin. Open **Settings → Knowz AI Sync**,
 choose **Connect to Knowz**, and finish sign-in in the browser. The plugin receives an expiring
 personal key without putting it in a URL or asking you to copy it. Back in Obsidian, choose an
 existing Knowz vault or create one from the vault dropdown.
@@ -69,26 +69,26 @@ administrator to enable it.
 
 ### From the Obsidian community directory
 
-Open **Settings → Community plugins → Browse**, search for **Knowz Sync**, and install.
+Open **Settings → Community plugins → Browse**, search for **Knowz AI Sync**, and install.
 
 ### Using BRAT
 
 1. Install and enable the **BRAT** community plugin.
 2. Choose **Add Beta plugin** and enter `knowz-io/obsidian-knowz-sync`.
-3. Enable **Knowz Sync** under **Settings → Community plugins**.
+3. Enable **Knowz AI Sync** under **Settings → Community plugins**.
 
 ### Manually
 
 1. Download `main.js` and `manifest.json` from the
    [latest release](https://github.com/knowz-io/obsidian-knowz-sync/releases/latest).
 2. Create `<vault>/.obsidian/plugins/knowz-sync/` and copy both files into it.
-3. Restart Obsidian and enable **Knowz Sync** under **Settings → Community plugins**.
+3. Restart Obsidian and enable **Knowz AI Sync** under **Settings → Community plugins**.
 
 To build from source instead: `npm install && npm run build`.
 
 ## Setup
 
-Open **Settings → Knowz Sync**, choose **Connect to Knowz**, finish browser approval, and select
+Open **Settings → Knowz AI Sync**, choose **Connect to Knowz**, finish browser approval, and select
 the Knowz vault you want to use. The settings are also reachable by searching Obsidian's
 settings for "Knowz", "sign in", "vault", or "excluded paths".
 
@@ -157,7 +157,7 @@ Beyond that:
 
 Obsidian asks plugin authors to state plainly how their plugin behaves. Here is ours.
 
-**This plugin requires an account.** Knowz Sync does nothing without a Knowz account, a vault
+**This plugin requires an account.** Knowz AI Sync does nothing without a Knowz account, a vault
 ID, and a personal API key. There is no offline or local-only mode.
 
 **This plugin uses the network.** It communicates with the Knowz API at the base URL you
