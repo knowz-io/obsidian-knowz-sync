@@ -11,6 +11,7 @@ import {
 import { InvalidApiUrlError, isTrustedKnowzHost, normalizeApiBaseUrl } from "./apiUrl";
 import { openApprovalUrl } from "./browserLauncher";
 import { confirmFirstSync } from "./confirmSyncModal";
+import { promptForVaultName } from "./createVaultModal";
 import { runObsidianDeviceCodeFlow } from "./deviceAuth";
 import { KnowzClient, type KnowzVault } from "./knowzClient";
 import { PullReviewModal } from "./pullReviewModal";
@@ -238,7 +239,10 @@ export default class KnowzSyncPlugin extends Plugin {
   async selectVault(selection: string): Promise<void> {
     let vault: KnowzVault | undefined;
     if (selection === "__create__") {
-      const requestedName = window.prompt("Name for the new Knowz vault", this.app.vault.getName());
+      // A plugin Modal rather than the browser's native prompt dialog, which Obsidian's
+      // guidelines discourage and which behaves badly on mobile, a supported platform here.
+      // Cancelling or entering nothing leaves the current vault binding untouched.
+      const requestedName = await promptForVaultName(this.app, this.app.vault.getName());
       if (requestedName === null || requestedName.trim() === "") {
         return;
       }
@@ -287,18 +291,29 @@ export default class KnowzSyncPlugin extends Plugin {
     });
   }
 
+  /**
+   * The notes the current exclusion settings would upload, and how many notes the vault
+   * holds in total. Both come from one enumeration: the count is only ever shown next to
+   * the eligible list, and asking Obsidian twice for the same list bought nothing.
+   */
+  syncScope(): { paths: string[]; total: number } {
+    const markdownFiles = this.app.vault.getMarkdownFiles();
+    return {
+      paths: markdownFiles
+        .map((file) => file.path)
+        .filter((path) => this.isSyncablePath(path))
+        .sort(),
+      total: markdownFiles.length,
+    };
+  }
+
   /** Notes that the current exclusion settings would upload. */
   syncablePaths(): string[] {
-    return this.app.vault
-      .getMarkdownFiles()
-      .map((file) => file.path)
-      .filter((path) => this.isSyncablePath(path))
-      .sort();
+    return this.syncScope().paths;
   }
 
   private previewSync(): void {
-    const paths = this.syncablePaths();
-    const total = this.app.vault.getMarkdownFiles().length;
+    const { paths, total } = this.syncScope();
     const sample = paths.slice(0, 10).join("\n");
     new Notice(
       `Knowz would sync ${paths.length} of ${total} notes to ` +
@@ -451,8 +466,8 @@ export class KnowzSettingTab extends PluginSettingTab {
    * count below) are recomputed each time the tab is opened or update() is called.
    */
   getSettingDefinitions(): SettingDefinitionItem[] {
-    const syncable = this.plugin.syncablePaths().length;
-    const total = this.plugin.app.vault.getMarkdownFiles().length;
+    const { paths, total } = this.plugin.syncScope();
+    const syncable = paths.length;
 
     const advanced: SettingDefinitionItem = {
       type: "page",

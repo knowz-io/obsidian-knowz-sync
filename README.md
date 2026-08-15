@@ -221,6 +221,15 @@ outside the vault and uses no Node.js or Electron API.
 Your Obsidian configuration folder is excluded unconditionally and cannot be re-included, since
 it holds every plugin's stored data — including credentials.
 
+**What the plugin can see.** To decide what to sync, the plugin asks Obsidian for the list of
+every Markdown file path in your vault. It has to: nothing else can tell it which notes exist,
+or which of them have been added, renamed, or removed since the last sync. Your exclusions are
+applied to that list before any note is opened, so an excluded note's path is seen, but its
+contents are never read and neither its contents nor its path are sent to Knowz. Only the notes
+that survive the filter are read, and only those are uploaded. The one exception is a note you
+exclude after it has already synced: the next full sync sends its path once, to delete it from
+Knowz.
+
 **Everything else in the vault is synced**, minus whatever you add under **Excluded paths**.
 The plugin shows you the count and the destination before the first upload, and the **Preview
 which notes would sync** command lists what is currently in scope.

@@ -6,14 +6,17 @@ import type {
   SettingDefinitionItem,
 } from "obsidian";
 import KnowzSyncPlugin, { KnowzSettingTab } from "../src/main";
+import { promptForVaultName } from "../src/createVaultModal";
 import { runObsidianDeviceCodeFlow } from "../src/deviceAuth";
 import { KnowzClient } from "../src/knowzClient";
 import { SyncEngine } from "../src/syncEngine";
 import { noticeMessages, Setting } from "./mocks/obsidian";
 
 vi.mock("../src/deviceAuth", () => ({ runObsidianDeviceCodeFlow: vi.fn() }));
+vi.mock("../src/createVaultModal", () => ({ promptForVaultName: vi.fn() }));
 
 const deviceAuthMock = vi.mocked(runObsidianDeviceCodeFlow);
+const promptForVaultNameMock = vi.mocked(promptForVaultName);
 
 /**
  * The settings tab is declarative as of plugin 1.0.7: Obsidian renders it from
@@ -159,6 +162,7 @@ describe("native Knowz onboarding", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     deviceAuthMock.mockReset();
+    promptForVaultNameMock.mockReset();
     noticeMessages.length = 0;
   });
 
@@ -250,12 +254,13 @@ describe("native Knowz onboarding", () => {
     expect(init).toHaveBeenCalledOnce();
   });
 
+  // The name is asked for in a plugin Modal, not window.prompt: Obsidian's guidelines
+  // discourage the native dialog and it behaves badly on mobile.
   it("creates a vault from the picker and initializes it", async () => {
     const { plugin, tab } = makeTab({ apiKey: `ukz_${"a".repeat(32)}` });
     await plugin.loadSettings();
     await plugin.onload();
-    const prompt = vi.fn(() => "Research");
-    Object.defineProperty(window, "prompt", { configurable: true, value: prompt });
+    promptForVaultNameMock.mockResolvedValue("Research");
     vi.spyOn(KnowzClient.prototype, "createVault").mockResolvedValue({
       id: "vault-new",
       name: "Research",
@@ -264,9 +269,40 @@ describe("native Knowz onboarding", () => {
 
     await tab.setControlValue("selectedVaultId", "__create__");
 
-    expect(prompt).toHaveBeenCalledWith("Name for the new Knowz vault", "TestVault");
+    expect(promptForVaultNameMock).toHaveBeenCalledWith(plugin.app, "TestVault");
     expect(plugin.settings).toMatchObject({ vaultId: "vault-new", vaultName: "Research" });
     expect(init).toHaveBeenCalledOnce();
+  });
+
+  // Dismissing the name modal must leave the existing binding exactly as it was: the old
+  // prompt path returned early on cancel, and nothing downstream may run.
+  it.each([
+    ["a cancelled modal", null],
+    ["a whitespace-only name", "   "],
+  ])("changes nothing on %s", async (_case, answer) => {
+    const { plugin, tab, saveData } = makeTab({
+      apiKey: `ukz_${"a".repeat(32)}`,
+      vaultId: "vault-1",
+      vaultName: "General",
+      repositoryId: "repo-1",
+    });
+    await plugin.loadSettings();
+    await plugin.onload();
+    promptForVaultNameMock.mockResolvedValue(answer);
+    const create = vi.spyOn(KnowzClient.prototype, "createVault");
+    const init = vi.spyOn(SyncEngine.prototype, "initializeRepository");
+    saveData.mockClear();
+
+    await tab.setControlValue("selectedVaultId", "__create__");
+
+    expect(create).not.toHaveBeenCalled();
+    expect(init).not.toHaveBeenCalled();
+    expect(saveData).not.toHaveBeenCalled();
+    expect(plugin.settings).toMatchObject({
+      vaultId: "vault-1",
+      vaultName: "General",
+      repositoryId: "repo-1",
+    });
   });
 
   it("disconnects locally, resets sync identity, and explains server-side revocation", async () => {

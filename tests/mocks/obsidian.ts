@@ -62,9 +62,37 @@ export class PluginSettingTab {
   }
 }
 
+/**
+ * Stands in for the input element behind a text component. Listeners are recorded rather
+ * than dispatched by a DOM, so a test can fire a key the way the user would.
+ */
+export type FakeInputEl = {
+  type: string;
+  rows: number;
+  listeners: Record<string, Array<(event: unknown) => void>>;
+  addEventListener(name: string, handler: (event: unknown) => void): void;
+  dispatch(name: string, event: unknown): void;
+};
+
+function fakeInputEl(): FakeInputEl {
+  return {
+    type: "text",
+    rows: 0,
+    listeners: {},
+    addEventListener(name, handler) {
+      (this.listeners[name] ??= []).push(handler);
+    },
+    dispatch(name, event) {
+      for (const handler of this.listeners[name] ?? []) {
+        handler(event);
+      }
+    },
+  };
+}
+
 /** A text/textarea component, recording what the plugin configured on it. */
 export class TextComponent {
-  inputEl: { type: string; rows: number } = { type: "text", rows: 0 };
+  inputEl: FakeInputEl = fakeInputEl();
   placeholder = "";
   value = "";
   changeHandler: (value: string) => unknown = () => {};
@@ -172,8 +200,16 @@ export class Modal {
     },
   };
   constructor(public app: App) {}
-  open(): void {}
-  close(): void {}
+  /** The real Modal runs these lifecycle hooks, and a dismissal is only observable through
+   * onClose — so the mock runs them too rather than leaving a modal that never closes. */
+  open(): void {
+    this.onOpen();
+  }
+  close(): void {
+    this.onClose();
+  }
+  onOpen(): void {}
+  onClose(): void {}
 }
 
 export const noticeMessages: string[] = [];

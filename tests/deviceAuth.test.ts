@@ -36,7 +36,7 @@ describe("runObsidianDeviceCodeFlow", () => {
       });
     });
 
-    const result = await runObsidianDeviceCodeFlow("https://api.dev.knowz.io", "Research", {
+    const result = await runObsidianDeviceCodeFlow("https://api.example.test", "Research", {
       request,
       sleep,
       now: () => now,
@@ -49,7 +49,7 @@ describe("runObsidianDeviceCodeFlow", () => {
     expect(showCode).toHaveBeenCalledWith("ABCD-EFGH", "https://dev.knowz.io/link");
     expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([2_000, 2_000, 9_000]);
     expect(request.mock.calls[0]?.[0]).toMatchObject({
-      url: "https://api.dev.knowz.io/api/v1/auth/device/code",
+      url: "https://api.example.test/api/v1/auth/device/code",
       method: "POST",
       throw: false,
     });
@@ -75,7 +75,7 @@ describe("runObsidianDeviceCodeFlow", () => {
       }))
       .mockResolvedValueOnce(response(400, { error: serverError }));
 
-    const run = runObsidianDeviceCodeFlow("https://api.dev.knowz.io", "Research", {
+    const run = runObsidianDeviceCodeFlow("https://api.example.test", "Research", {
       request,
       sleep: async (ms) => { now += ms; },
       now: () => now,
@@ -97,7 +97,7 @@ describe("runObsidianDeviceCodeFlow", () => {
       expires_in: 5,
     }));
 
-    await expect(runObsidianDeviceCodeFlow("https://api.dev.knowz.io", "Research", {
+    await expect(runObsidianDeviceCodeFlow("https://api.example.test", "Research", {
       request,
       sleep: async (ms) => { now += ms; },
       now: () => now,
