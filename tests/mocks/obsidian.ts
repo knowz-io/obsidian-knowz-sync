@@ -1,6 +1,7 @@
 export type App = {
   workspace: { onLayoutReady(callback: () => void): void };
   vault: {
+    configDir: string;
     on(name: string, handler: (...args: unknown[]) => void): unknown;
     getName(): string;
     getMarkdownFiles(): TFile[];
@@ -34,32 +35,121 @@ export class Plugin {
   async saveData(_data: unknown): Promise<void> {}
 }
 
+/**
+ * Stands in for the declarative settings API added in app 1.13.0. `update()` records that a
+ * re-render was asked for; `getControlValue`/`setControlValue` are the base-class fallbacks
+ * the plugin delegates to for keys it does not own, and throw here so a test notices if the
+ * plugin ever leans on them for a key it should be handling itself.
+ */
 export class PluginSettingTab {
   containerEl = { empty(): void {} };
-  constructor(_app: App, _plugin: unknown) {}
+  updateCount = 0;
+  constructor(
+    public app: App,
+    _plugin: unknown,
+  ) {}
+  update(): void {
+    this.updateCount += 1;
+  }
+  getControlValue(key: string): unknown {
+    throw new Error(`unhandled getControlValue(${key})`);
+  }
+  async setControlValue(key: string, _value: unknown): Promise<void> {
+    throw new Error(`unhandled setControlValue(${key})`);
+  }
+}
+
+/** A text/textarea component, recording what the plugin configured on it. */
+export class TextComponent {
+  inputEl: { type: string; rows: number } = { type: "text", rows: 0 };
+  placeholder = "";
+  value = "";
+  changeHandler: (value: string) => unknown = () => {};
+  setPlaceholder(placeholder: string): this {
+    this.placeholder = placeholder;
+    return this;
+  }
+  setValue(value: string): this {
+    this.value = value;
+    return this;
+  }
+  onChange(handler: (value: string) => unknown): this {
+    this.changeHandler = handler;
+    return this;
+  }
+}
+
+export class ButtonComponent {
+  text = "";
+  cta = false;
+  clickHandler: () => unknown = () => {};
+  setButtonText(text: string): this {
+    this.text = text;
+    return this;
+  }
+  setCta(): this {
+    this.cta = true;
+    return this;
+  }
+  onClick(handler: () => unknown): this {
+    this.clickHandler = handler;
+    return this;
+  }
+}
+
+export class ToggleComponent {
+  value = false;
+  changeHandler: (value: boolean) => unknown = () => {};
+  setValue(value: boolean): this {
+    this.value = value;
+    return this;
+  }
+  onChange(handler: (value: boolean) => unknown): this {
+    this.changeHandler = handler;
+    return this;
+  }
 }
 
 export class Setting {
-  constructor(_containerEl: unknown) {}
-  setName(): this {
+  readonly texts: TextComponent[] = [];
+  readonly buttons: ButtonComponent[] = [];
+  readonly toggles: ToggleComponent[] = [];
+  name = "";
+  desc = "";
+  heading = false;
+
+  constructor(_containerEl?: unknown) {}
+  setName(name: string): this {
+    this.name = name;
     return this;
   }
-  setDesc(): this {
+  setDesc(desc: string): this {
+    this.desc = desc;
     return this;
   }
   setHeading(): this {
+    this.heading = true;
     return this;
   }
-  addText(): this {
+  addText(callback: (text: TextComponent) => unknown): this {
+    const text = new TextComponent();
+    this.texts.push(text);
+    callback(text);
     return this;
   }
-  addTextArea(): this {
+  addTextArea(callback: (text: TextComponent) => unknown): this {
+    return this.addText(callback);
+  }
+  addButton(callback: (button: ButtonComponent) => unknown): this {
+    const button = new ButtonComponent();
+    this.buttons.push(button);
+    callback(button);
     return this;
   }
-  addButton(): this {
-    return this;
-  }
-  addToggle(): this {
+  addToggle(callback: (toggle: ToggleComponent) => unknown): this {
+    const toggle = new ToggleComponent();
+    this.toggles.push(toggle);
+    callback(toggle);
     return this;
   }
 }

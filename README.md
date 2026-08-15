@@ -43,6 +43,7 @@ your vault there and keep it current:
 
 ## Requirements
 
+- Obsidian 1.13.0 or later, on desktop or mobile.
 - A Knowz account, and the ID of the vault you want to sync into.
 - A personal Knowz API key (one that begins with `ukz_`). Tenant-level keys beginning with
   `kz_` will not work — the sync endpoints need to know which user is writing.
@@ -168,8 +169,9 @@ your Knowz plan governs the features available to your account.
 ## About your API key
 
 Your key is stored in `.obsidian/plugins/knowz-sync/data.json` inside your vault, in plain
-text. Obsidian introduced a secret storage API for plugins in app version 1.11.4; this plugin
-still supports 1.4.0 and has not moved to it yet. Doing so is planned.
+text. Obsidian offers a secret storage API that keeps a credential out of the vault; this
+plugin has not moved to it yet, because that store is per-device and would mean re-entering
+your key on every device you sync this vault to. Doing it well is planned.
 
 Be aware that any other plugin you install can read that file. That is true of every Obsidian
 plugin that stores a credential, and it is not something a plugin can prevent — so the
