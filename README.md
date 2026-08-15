@@ -9,8 +9,9 @@ searchable by meaning rather than keyword, traversable as a graph that inherits 
 guessing. The same corpus powers enterprise AI chat, so a team can ask questions of everything
 it has collectively written.
 
-Obsidian stays the source of truth. Nothing about how you write changes — Knowz becomes the
-intelligence layer on top of it.
+Obsidian stays in control. Nothing is written back automatically: when a note changes in
+Knowz, the plugin shows it for review and only updates the local file when you explicitly
+choose **Apply**.
 
 ## What you get with a Knowz account
 
@@ -35,6 +36,8 @@ your vault there and keep it current:
   them.
 - **Keeps up as you write.** Create, edit, rename, and delete are picked up from vault events
   and pushed in a coalesced batch, so a burst of edits becomes one upload rather than fifty.
+- **Reviews changes from Knowz.** Server-only edits are detected passively and can be applied
+  one at a time or all together. Conflicts are reported but never overwritten automatically.
 - **Titles notes the way you'd expect.** Front-matter `title` wins, then a leading H1, then
   the filename.
 - **Stays out of the way.** Your Obsidian configuration folder, `.trash/`, and `.smart-env/`
@@ -48,40 +51,19 @@ your vault there and keep it current:
 
 ## Getting a Knowz account
 
-The plugin needs three things from Knowz: an **API base URL**, a **personal API key**, and a
-**vault ID**. All three come from the Knowz web app, and it takes about two minutes.
+You can create or sign into a Knowz account from the plugin. Open **Settings → Knowz Sync**,
+choose **Connect to Knowz**, and finish sign-in in the browser. The plugin receives an expiring
+personal key without putting it in a URL or asking you to copy it. Back in Obsidian, choose an
+existing Knowz vault or create one from the vault dropdown.
 
-**1. Create an account.** Sign up at [app.knowz.io/register](https://app.knowz.io/register), or
-from [knowzai.com](https://knowzai.com). Confirm your email address, then sign in.
+*Self-hosting Knowz instead?* Open **Advanced manual setup**, set your deployment's API URL,
+and enter a personal `ukz_` key and vault ID. The manual fields remain available when a hosted
+deployment does not expose the browser sign-in flow.
 
-*Self-hosting Knowz instead?* Everything below is the same — do it in your own deployment's web
-app, and set the plugin's **API base URL** to your own API instead of `https://api.knowz.io`.
-
-**2. Create the vault you want to sync into.** Go to **Settings → Vaults** and create one, or
-pick an existing vault. A Knowz vault is the destination collection; it is separate from your
-Obsidian vault, and one Obsidian vault syncs into one Knowz vault.
-
-**3. Copy the vault ID.** Still on **Settings → Vaults**, use the **copy vault ID** button on
-that vault's row. It is a GUID — this is what goes in the plugin's **Vault ID** field.
-
-**4. Create a personal API key.** Go to **Settings → API keys → Create API Key**:
-
-- Choose **Personal (`ukz_`)**, *not* Workspace (`kz_`). Workspace keys are rejected by the
-  sync endpoints, which need to know which user is writing — the request fails with "user
-  identity could not be established".
-- Give it a name you will recognise later, such as `Obsidian`.
-- Set **Expiration (days)**. Do set one; the key is stored in your vault in plain text, so a
-  key that expires limits the damage if a copy of the vault leaks. See
-  [About your API key](#about-your-api-key).
-- **Copy the key immediately.** It is shown once and cannot be retrieved afterwards. If you
-  lose it, delete it and create another.
-
-**5. Check that git sync is available on your plan.** The plugin uses the Knowz git-sync
+Check that git sync is available on your plan. The plugin uses the Knowz git-sync
 endpoints (`integrations.enableGitSync`), which are tier-gated. If the feature is off for your
 tenant, the plugin's first request returns HTTP 403 — upgrade the plan or ask your Knowz
 administrator to enable it.
-
-You now have all three values. Install the plugin, then paste them into its settings.
 
 ## Install
 
@@ -106,17 +88,19 @@ To build from source instead: `npm install && npm run build`.
 
 ## Setup
 
-Open **Settings → Knowz Sync** and fill in the three values from
-[Getting a Knowz account](#getting-a-knowz-account). The settings are also reachable by
-searching Obsidian's settings for "Knowz", "API key", or "excluded paths".
+Open **Settings → Knowz Sync**, choose **Connect to Knowz**, finish browser approval, and select
+the Knowz vault you want to use. The settings are also reachable by searching Obsidian's
+settings for "Knowz", "sign in", "vault", or "excluded paths".
 
 | Setting | What it's for | Where it comes from |
 |---------|---------------|---------------------|
-| **API base URL** | Your Knowz environment, normally `https://api.knowz.io`. | Leave as-is unless you self-host. |
-| **Personal API key** | An expiring `ukz_` key. | Knowz → Settings → API keys. |
-| **Vault ID** | The GUID of the destination Knowz vault. | Knowz → Settings → Vaults → copy vault ID. |
+| **Connect to Knowz** | Browser sign-in that creates an expiring personal key. | Approve in the Knowz web app. |
+| **Knowz vault** | The destination for this Obsidian vault. | Pick or create one after connecting. |
 | **Sync on startup** | Run a full sync each time Obsidian launches. Off by default. | Your choice. |
 | **Excluded paths** | Folders and file patterns to keep out of Knowz. One per line. | See [Excluding notes](#excluding-notes). |
+
+The API URL, personal key, and raw vault ID remain under **Advanced manual setup** for
+self-hosted deployments and recovery.
 
 Then run a sync from the ribbon icon or the **Sync vault** command. Before the first
 upload the plugin tells you how many notes it is about to send and where, and waits for you to
@@ -142,9 +126,11 @@ Matching is case-insensitive, and lines beginning with `#` are treated as commen
 
 ## How syncing behaves
 
-**Obsidian is authoritative.** Edits and deletes made in the Knowz web client are overridden
-by the next sync. A Knowz-side delete is undone by the next full sync — to remove something
-permanently, delete the note in Obsidian.
+**Knowz changes require review.** A note changed only in Knowz is protected from the next push
+and appears under **Review changes from Knowz**. Choose **Apply** to replace that local note with
+the reviewed Knowz version. If both copies changed, the plugin reports a conflict and writes
+nothing. Knowz-side deletes are still undone by the next full sync; delete a note in Obsidian
+to remove it permanently.
 
 **Full syncs repair drift.** A full sync compares your eligible notes against a fresh manifest
 from Knowz, so anything left inconsistent by a previously failed push is corrected rather than
@@ -164,6 +150,8 @@ Beyond that:
   after the server confirms, so an interrupted sync resumes rather than silently skipping.
 - A full sync that reads an empty vault while notes are already synced is refused outright,
   rather than interpreting it as "the user deleted everything."
+- The plugin checks confirmed repositories for Knowz-side changes every five minutes. You can
+  run **Review changes from Knowz** at any time for an immediate check.
 
 ## Disclosures
 
@@ -194,6 +182,11 @@ it holds every plugin's stored data — including credentials.
 **Everything else in the vault is synced**, minus whatever you add under **Excluded paths**.
 The plugin shows you the count and the destination before the first upload, and the **Preview
 which notes would sync** command lists what is currently in scope.
+
+**What is written.** The plugin never writes a Knowz change automatically. When you explicitly
+choose **Apply** or **Apply all** in the review dialog, it replaces only the listed server-only
+Markdown files with their current Knowz content. A note changed on both sides is shown as a
+conflict and is not written.
 
 **No telemetry.** This plugin collects no usage analytics, no crash reports, and no
 client-side telemetry of any kind.
@@ -226,7 +219,8 @@ stored in a file.
 
 ## Current limitations
 
-- Sync is one-way. Edits made in Knowz are not written back to your notes.
+- Knowz changes require explicit review; conflicts are detected but are not merged or applied.
+- Knowz-side deletes are not pulled into Obsidian.
 - Attachments and non-Markdown files are not synced.
 - Front-matter tags are not yet mapped to Knowz tags.
 - Empty notes are not synced until they contain content.
