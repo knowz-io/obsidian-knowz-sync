@@ -76,6 +76,20 @@ describe("KnowzSyncPlugin.onload", () => {
     expect(app.vault.on).toHaveBeenCalled();
   });
 
+  it("registers a keyboard-accessible native connection command", async () => {
+    const { app } = makeApp(false);
+    const plugin = makePlugin(app, {});
+    const addCommand = vi.spyOn(plugin, "addCommand");
+
+    await plugin.onload();
+
+    expect(addCommand).toHaveBeenCalledWith(expect.objectContaining({
+      id: "connect-to-knowz",
+      name: "Connect to Knowz",
+      callback: expect.any(Function),
+    }));
+  });
+
   it("registers watchers once layout is ready", async () => {
     const { app } = makeApp(true);
     const plugin = makePlugin(app, CONFIGURED);

@@ -50,6 +50,13 @@ export default class KnowzSyncPlugin extends Plugin {
         this.previewSync();
       },
     });
+    this.addCommand({
+      id: "connect-to-knowz",
+      name: "Connect to Knowz",
+      callback: () => {
+        void this.connectToKnowz();
+      },
+    });
     this.addSettingTab(new KnowzSettingTab(this.app, this));
 
     // Vault watchers and the startup sync must wait for the workspace layout. Before it is
