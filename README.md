@@ -44,11 +44,44 @@ your vault there and keep it current:
 ## Requirements
 
 - Obsidian 1.13.0 or later, on desktop or mobile.
-- A Knowz account, and the ID of the vault you want to sync into.
-- A personal Knowz API key (one that begins with `ukz_`). Tenant-level keys beginning with
-  `kz_` will not work — the sync endpoints need to know which user is writing.
-- Git sync enabled on your Knowz tenant (`integrations.enableGitSync`). This is tier-gated;
-  if it's off, the plugin's first request returns HTTP 403.
+- A Knowz account. The plugin does nothing without one — see below.
+
+## Getting a Knowz account
+
+The plugin needs three things from Knowz: an **API base URL**, a **personal API key**, and a
+**vault ID**. All three come from the Knowz web app, and it takes about two minutes.
+
+**1. Create an account.** Sign up at [app.knowz.io/register](https://app.knowz.io/register), or
+from [knowzai.com](https://knowzai.com). Confirm your email address, then sign in.
+
+*Self-hosting Knowz instead?* Everything below is the same — do it in your own deployment's web
+app, and set the plugin's **API base URL** to your own API instead of `https://api.knowz.io`.
+
+**2. Create the vault you want to sync into.** Go to **Settings → Vaults** and create one, or
+pick an existing vault. A Knowz vault is the destination collection; it is separate from your
+Obsidian vault, and one Obsidian vault syncs into one Knowz vault.
+
+**3. Copy the vault ID.** Still on **Settings → Vaults**, use the **copy vault ID** button on
+that vault's row. It is a GUID — this is what goes in the plugin's **Vault ID** field.
+
+**4. Create a personal API key.** Go to **Settings → API keys → Create API Key**:
+
+- Choose **Personal (`ukz_`)**, *not* Workspace (`kz_`). Workspace keys are rejected by the
+  sync endpoints, which need to know which user is writing — the request fails with "user
+  identity could not be established".
+- Give it a name you will recognise later, such as `Obsidian`.
+- Set **Expiration (days)**. Do set one; the key is stored in your vault in plain text, so a
+  key that expires limits the damage if a copy of the vault leaks. See
+  [About your API key](#about-your-api-key).
+- **Copy the key immediately.** It is shown once and cannot be retrieved afterwards. If you
+  lose it, delete it and create another.
+
+**5. Check that git sync is available on your plan.** The plugin uses the Knowz git-sync
+endpoints (`integrations.enableGitSync`), which are tier-gated. If the feature is off for your
+tenant, the plugin's first request returns HTTP 403 — upgrade the plan or ask your Knowz
+administrator to enable it.
+
+You now have all three values. Install the plugin, then paste them into its settings.
 
 ## Install
 
@@ -73,15 +106,17 @@ To build from source instead: `npm install && npm run build`.
 
 ## Setup
 
-Open **Settings → Knowz Sync**:
+Open **Settings → Knowz Sync** and fill in the three values from
+[Getting a Knowz account](#getting-a-knowz-account). The settings are also reachable by
+searching Obsidian's settings for "Knowz", "API key", or "excluded paths".
 
-| Setting | What it's for |
-|---------|---------------|
-| **API base URL** | Your Knowz environment, normally `https://api.knowz.io`. |
-| **Personal API key** | An expiring, non-admin `ukz_` key. |
-| **Vault ID** | The GUID of the destination Knowz vault. |
-| **Sync on startup** | Run a full sync each time Obsidian launches. Off by default. |
-| **Excluded paths** | Folders and file patterns to keep out of Knowz. One per line. |
+| Setting | What it's for | Where it comes from |
+|---------|---------------|---------------------|
+| **API base URL** | Your Knowz environment, normally `https://api.knowz.io`. | Leave as-is unless you self-host. |
+| **Personal API key** | An expiring `ukz_` key. | Knowz → Settings → API keys. |
+| **Vault ID** | The GUID of the destination Knowz vault. | Knowz → Settings → Vaults → copy vault ID. |
+| **Sync on startup** | Run a full sync each time Obsidian launches. Off by default. | Your choice. |
+| **Excluded paths** | Folders and file patterns to keep out of Knowz. One per line. | See [Excluding notes](#excluding-notes). |
 
 Then run a sync from the ribbon icon or the **Sync vault** command. Before the first
 upload the plugin tells you how many notes it is about to send and where, and waits for you to
