@@ -5,7 +5,6 @@ import {
   PluginSettingTab,
   Setting,
   TFile,
-  type SettingDefinitionItem,
   type TAbstractFile,
 } from "obsidian";
 import { InvalidApiUrlError, isTrustedKnowzHost, normalizeApiBaseUrl } from "./apiUrl";
@@ -35,7 +34,7 @@ export default class KnowzSyncPlugin extends Plugin {
     });
     this.addCommand({
       id: "sync-now",
-      name: "Sync vault to Knowz",
+      name: "Sync vault",
       callback: () => {
         void this.runFullSync();
       },
@@ -240,79 +239,15 @@ class KnowzSettingTab extends PluginSettingTab {
     super(app, plugin);
   }
 
-  /**
-   * Declarative descriptions of every setting, so they are indexed by Obsidian's settings
-   * search on app 1.13.0 and later. The base class calls this when the tab is registered,
-   * independently of display().
-   *
-   * Rendering still happens in display() below rather than from these definitions, for two
-   * reasons: minAppVersion is 1.4.0 and this API does not exist before 1.13.0, and the
-   * declarative text control has no masked variant — rendering the API key through it would
-   * put a credential on screen in clear text.
-   */
-  getSettingDefinitions(): SettingDefinitionItem[] {
-    return [
-      {
-        name: "API base URL",
-        desc: "The Knowz API URL, such as https://api.knowz.io",
-        aliases: ["endpoint", "server", "host", "self-hosted"],
-        control: { type: "text", key: "apiBaseUrl", placeholder: "https://api.knowz.io" },
-      },
-      {
-        name: "Personal API key",
-        desc: "An expiring, non-admin key beginning ukz_",
-        aliases: ["token", "credential", "authentication", "sign in"],
-        control: { type: "text", key: "apiKey", placeholder: "ukz_…" },
-      },
-      {
-        name: "Vault ID",
-        desc: "The destination Knowz vault GUID",
-        aliases: ["destination", "workspace"],
-        control: { type: "text", key: "vaultId" },
-      },
-      {
-        name: "Sync on startup",
-        desc: "Run a full sync whenever Obsidian starts",
-        aliases: ["automatic", "launch"],
-        control: { type: "toggle", key: "syncOnStartup" },
-      },
-      {
-        type: "group",
-        heading: "What gets synced",
-        items: [
-          {
-            name: "Excluded paths",
-            desc: "Folders and file patterns to keep out of Knowz, one per line",
-            aliases: ["exclude", "ignore", "privacy", "glob", "filter", "skip"],
-            control: { type: "textarea", key: "excludeGlobs", rows: 8 },
-          },
-        ],
-      },
-    ];
-  }
-
-  /** excludeGlobs is stored as an array but presented as one pattern per line. */
-  getControlValue(key: string): unknown {
-    if (key === "excludeGlobs") {
-      return this.plugin.settings.excludeGlobs.join("\n");
-    }
-    return super.getControlValue(key);
-  }
-
-  async setControlValue(key: string, value: unknown): Promise<void> {
-    if (key === "excludeGlobs") {
-      this.plugin.settings.excludeGlobs = parseExcludePatterns(String(value));
-      await this.plugin.saveSettings();
-      return;
-    }
-    if (key === "apiBaseUrl") {
-      // Never persist a URL the client would reject at request time.
-      this.plugin.settings.apiBaseUrl = normalizeApiBaseUrl(String(value));
-      await this.plugin.saveSettings();
-      return;
-    }
-    await super.setControlValue(key, value);
-  }
+  // Obsidian 1.13.0 added a declarative settings API (getSettingDefinitions) that indexes
+  // each setting for the settings search. It is deliberately NOT used here: minAppVersion is
+  // 1.4.0, and the no-unsupported-api rule requires the declared floor to cover every API
+  // used. Adopting it would mean either an automated-review error or raising the floor to
+  // 1.13.0 and dropping every user on an older app — a worse trade than settings not being
+  // individually searchable. Revisit when the floor moves to 1.13.0 for other reasons.
+  //
+  // Note the declarative text control also has no masked variant, so the API key row below
+  // would render a credential in clear text under that API.
 
   display(): void {
     const { containerEl } = this;

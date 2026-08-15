@@ -1,7 +1,7 @@
 {
   "id": "knowz-sync",
-  "name": "Knowz",
-  "version": "1.0.4",
+  "name": "Knowz Sync",
+  "version": "1.0.5",
   "minAppVersion": "1.4.0",
   "description": "Connect your vault to Knowz for semantic search, vector retrieval, agentic RAG, and AI chat grounded in your own notes.",
   "author": "Knowz",
