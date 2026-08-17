@@ -94,10 +94,31 @@ describe("declarative settings definitions", () => {
       "API base URL",
       "Personal API key",
       "Vault ID",
+      "Sync now",
+      "Push to Knowz",
+      "Pull from Knowz",
       "Sync on startup",
       "Excluded paths",
       "Notes that would sync",
     ]);
+  });
+
+  it("exposes Sync, Push, and Pull on a connected account", async () => {
+    const { plugin, tab } = makeTab({
+      apiKey: `ukz_${"a".repeat(32)}`,
+      accountName: "Alex",
+      vaultId: "vault-1",
+    });
+    await plugin.loadSettings();
+    const names = flatten(tab.getSettingDefinitions()).map((definition) => definition.name);
+    expect(names).toEqual(expect.arrayContaining(["Sync now", "Push to Knowz", "Pull from Knowz"]));
+
+    const sync = flatten(tab.getSettingDefinitions()).find((definition) => definition.name === "Sync now");
+    const run = vi.spyOn(plugin, "runFullSync").mockResolvedValue(undefined);
+    const setting = new Setting();
+    renderOf(sync)(setting);
+    setting.buttons[0].clickHandler();
+    expect(run).toHaveBeenCalledOnce();
   });
 
   it("gives every row search aliases and a description", async () => {

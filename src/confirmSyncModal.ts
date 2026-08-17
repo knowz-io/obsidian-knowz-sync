@@ -5,6 +5,8 @@ export interface FirstSyncSummary {
   host: string;
   /** How many notes the current settings would upload. */
   fileCount: number;
+  /** How many notes already in the Knowz repository would be downloaded. */
+  remoteNoteCount: number;
   /** Whether the host is knowz.io or loopback. */
   trustedHost: boolean;
 }
@@ -31,13 +33,14 @@ export class ConfirmSyncModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
 
-    contentEl.createEl("h2", { text: "Sync this vault to Knowz?" });
+    contentEl.createEl("h2", { text: "Sync this vault with Knowz?" });
 
     contentEl.createEl("p", {
       text:
         `${this.summary.fileCount} note${this.summary.fileCount === 1 ? "" : "s"} from this ` +
         `vault will be uploaded to ${this.summary.host}, along with the links between them. ` +
-        "Notes you add or edit later are uploaded automatically.",
+        `${this.summary.remoteNoteCount} note${this.summary.remoteNoteCount === 1 ? "" : "s"} ` +
+        "already in Knowz will be downloaded into this vault. Later edits sync both ways.",
     });
 
     if (!this.summary.trustedHost) {
@@ -63,7 +66,7 @@ export class ConfirmSyncModal extends Modal {
       )
       .addButton((button) =>
         button
-          .setButtonText("Sync vault")
+          .setButtonText("Sync with Knowz")
           .setCta()
           .onClick(() => {
             this.confirmed = true;

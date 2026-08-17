@@ -38,14 +38,28 @@ export default class KnowzSyncPlugin extends Plugin {
     await this.loadSettings();
     this.syncEngine = new SyncEngine(this);
 
-    this.addRibbonIcon("refresh-cw", "Sync to Knowz", () => {
+    this.addRibbonIcon("refresh-cw", "Sync with Knowz", () => {
       void this.runFullSync();
     });
     this.addCommand({
       id: "sync-now",
-      name: "Sync vault",
+      name: "Sync with Knowz",
       callback: () => {
         void this.runFullSync();
+      },
+    });
+    this.addCommand({
+      id: "push-to-knowz",
+      name: "Push to Knowz",
+      callback: () => {
+        void this.runPushSync();
+      },
+    });
+    this.addCommand({
+      id: "pull-from-knowz",
+      name: "Pull from Knowz",
+      callback: () => {
+        void this.runPullSync();
       },
     });
     this.addCommand({
@@ -131,6 +145,22 @@ export default class KnowzSyncPlugin extends Plugin {
       return;
     }
     await this.syncEngine.runFullSync();
+    this.startPullDetection();
+  }
+
+  async runPushSync(): Promise<void> {
+    if (!(await this.ensureFirstSyncConfirmed())) {
+      return;
+    }
+    await this.syncEngine.runPushSync();
+    this.startPullDetection();
+  }
+
+  async runPullSync(): Promise<void> {
+    if (!(await this.ensureFirstSyncConfirmed())) {
+      return;
+    }
+    await this.syncEngine.runPullSync();
     this.startPullDetection();
   }
 
@@ -358,9 +388,20 @@ export default class KnowzSyncPlugin extends Plugin {
       return false;
     }
 
+    let remoteNoteCount = 0;
+    if (this.settings.repositoryId) {
+      try {
+        const manifest = await this.client().getFileManifest(this.settings.repositoryId);
+        remoteNoteCount = manifest.files.length;
+      } catch {
+        remoteNoteCount = 0;
+      }
+    }
+
     const confirmed = await confirmFirstSync(this.app, {
       host,
       fileCount: this.syncablePaths().length,
+      remoteNoteCount,
       trustedHost: isTrustedKnowzHost(this.settings.apiBaseUrl),
     });
 
@@ -405,7 +446,7 @@ export default class KnowzSyncPlugin extends Plugin {
 
   private async checkPullChanges(): Promise<void> {
     try {
-      await this.syncEngine.detectPullChanges();
+      await this.syncEngine.runPullSync({ quiet: true });
     } catch (error) {
       new Notice(`Knowz pull check failed: ${messageOf(error)}`);
     }
@@ -553,8 +594,41 @@ export class KnowzSettingTab extends PluginSettingTab {
 
     const syncDefinitions: SettingDefinitionItem[] = [
       {
+        name: "Sync now",
+        desc: "Push local notes and pull Knowz notes in one pass",
+        aliases: ["sync", "now", "both", "bidirectional"],
+        render: (setting) => {
+          setting.addButton((button) => button
+            .setButtonText("Sync now")
+            .setCta()
+            .onClick(() => {
+              void this.plugin.runFullSync();
+            }));
+        },
+      },
+      {
+        name: "Push to Knowz",
+        desc: "Upload local adds, edits, and deletes without writing Knowz changes to disk",
+        aliases: ["push", "upload", "send"],
+        render: (setting) => {
+          setting.addButton((button) => button.setButtonText("Push").onClick(() => {
+            void this.plugin.runPushSync();
+          }));
+        },
+      },
+      {
+        name: "Pull from Knowz",
+        desc: "Download notes that changed or exist only in Knowz",
+        aliases: ["pull", "download", "remote"],
+        render: (setting) => {
+          setting.addButton((button) => button.setButtonText("Pull").onClick(() => {
+            void this.plugin.runPullSync();
+          }));
+        },
+      },
+      {
         name: "Sync on startup",
-        desc: "Run a full sync whenever Obsidian starts",
+        desc: "Run a full two-way sync whenever Obsidian starts",
         aliases: ["automatic", "launch", "boot", "open"],
         control: { type: "toggle", key: "syncOnStartup" },
       },
@@ -650,7 +724,7 @@ export class KnowzSettingTab extends PluginSettingTab {
         name: "Changes from Knowz",
         desc:
           `${this.plugin.remoteChangeCount()} ` +
-          `${this.plugin.remoteChangeCount() === 1 ? "note needs" : "notes need"} review before being written to Obsidian`,
+          `${this.plugin.remoteChangeCount() === 1 ? "conflict remains" : "conflicts remain"} after automatic pull`,
         aliases: ["pull", "download", "remote", "review", "conflict", "changed"],
         render: (setting) => {
           setting.addButton((button) => button.setButtonText("Review").onClick(async () => {

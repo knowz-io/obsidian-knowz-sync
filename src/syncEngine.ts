@@ -8,7 +8,7 @@ import {
   type GitFileManifest,
   type PushResult,
 } from "./knowzClient";
-import { isExcluded, type KnowzPluginSettings } from "./settings";
+import { isConflictSidecar, isExcluded, type KnowzPluginSettings } from "./settings";
 import type { PendingChange } from "./watcher";
 
 const MAX_BATCH_FILES = 200;
@@ -28,7 +28,12 @@ interface PushOutcome {
   unconfirmedPaths: Set<string>;
 }
 
-export type PullClassification = "unchanged" | "server-only" | "local-only" | "both-changed";
+export type PullClassification =
+  | "unchanged"
+  | "server-only"
+  | "server-new"
+  | "local-only"
+  | "both-changed";
 
 export interface PullChange {
   knowledgeId: string;
@@ -71,6 +76,113 @@ export function classifyPullChanges(
   }
 
   return changes;
+}
+
+export interface BidirectionalPlan {
+  pull: PullChange[];
+  push: CliFileChange[];
+  conflicts: PullChange[];
+}
+
+export function conflictSidecarPath(path: string): string {
+  const slash = path.lastIndexOf("/");
+  const directory = slash >= 0 ? path.slice(0, slash + 1) : "";
+  const name = slash >= 0 ? path.slice(slash + 1) : path;
+  const dot = name.lastIndexOf(".");
+  const stem = dot >= 0 ? name.slice(0, dot) : name;
+  const extension = dot >= 0 ? name.slice(dot) : ".md";
+  return `${directory}${stem}.knowz-conflict${extension}`;
+}
+
+export function planBidirectionalSync(
+  disk: Record<string, string>,
+  manifest: GitFileManifest["files"],
+  known: Record<string, string>,
+): BidirectionalPlan {
+  const pull: PullChange[] = [];
+  const push: CliFileChange[] = [];
+  const conflicts: PullChange[] = [];
+  const manifestByPath = new Map(manifest.map((entry) => [entry.path, entry]));
+
+  for (const entry of [...manifest].sort((left, right) => comparePaths(left.path, right.path))) {
+    const onDisk = entry.path in disk;
+    const isKnown = entry.path in known;
+    const localHash = disk[entry.path] ?? "";
+    const knownHash = known[entry.path] ?? "";
+
+    if (!onDisk && !isKnown) {
+      if (entry.contentHash !== null) {
+        pull.push(toPullChange(entry, "", "", "server-new"));
+      }
+      continue;
+    }
+
+    if (!onDisk && isKnown) {
+      push.push({ path: entry.path, action: 2 });
+      continue;
+    }
+
+    if (onDisk && isKnown) {
+      if (entry.contentHash === null) {
+        push.push({ path: entry.path, action: 1, contentHash: localHash });
+        continue;
+      }
+      const serverChanged = entry.contentHash !== knownHash;
+      const localChanged = localHash !== knownHash;
+      if (serverChanged && localChanged) {
+        conflicts.push(toPullChange(entry, localHash, knownHash, "both-changed"));
+        push.push({ path: entry.path, action: 1, contentHash: localHash });
+      } else if (serverChanged) {
+        pull.push(toPullChange(entry, localHash, knownHash, "server-only"));
+      } else if (localChanged) {
+        push.push({ path: entry.path, action: 1, contentHash: localHash });
+      }
+      continue;
+    }
+
+    if (entry.contentHash === null || entry.contentHash !== localHash) {
+      conflicts.push(toPullChange(entry, localHash, "", "both-changed"));
+      push.push({ path: entry.path, action: 0, contentHash: localHash });
+    }
+  }
+
+  for (const path of Object.keys(disk).sort(comparePaths)) {
+    if (!manifestByPath.has(path)) {
+      push.push({ path, action: 0, contentHash: disk[path] });
+    }
+  }
+
+  for (const path of Object.keys(known).sort(comparePaths)) {
+    if (!(path in disk) && !manifestByPath.has(path)) {
+      push.push({ path, action: 2 });
+    }
+  }
+
+  return {
+    pull,
+    push: pairRenames(
+      push,
+      (path) => manifestByPath.get(path)?.contentHash ?? known[path] ?? disk[path],
+    ),
+    conflicts,
+  };
+}
+
+function toPullChange(
+  entry: GitFileManifest["files"][number],
+  localHash: string,
+  knownHash: string,
+  classification: PullClassification,
+): PullChange {
+  return {
+    knowledgeId: entry.knowledgeId,
+    path: entry.path,
+    serverHash: entry.contentHash ?? "",
+    localHash,
+    knownHash,
+    updatedAt: entry.updatedAt,
+    classification,
+  };
 }
 
 function withoutUnconfirmed(
@@ -243,23 +355,8 @@ export class SyncEngine {
   }
 
   async detectPullChanges(): Promise<PullChange[]> {
-    const repositoryId = this.host.settings.repositoryId || await this.ensureRepository();
-    const manifest = await this.client().getFileManifest(repositoryId);
-    const disk: Record<string, string> = {};
-
-    for (const entry of manifest.files) {
-      if (!(entry.path in this.host.settings.knownFiles)) {
-        continue;
-      }
-      const file = this.host.app.vault.getAbstractFileByPath(entry.path);
-      if (!(file instanceof TFile)) {
-        continue;
-      }
-      disk[entry.path] = await contentHash(await this.host.app.vault.cachedRead(file));
-    }
-
-    const detected = classifyPullChanges(disk, manifest.files, this.host.settings.knownFiles);
-    this.storePullChanges(detected, true);
+    const plan = await this.planFromServer();
+    this.storePullChanges([...plan.pull, ...plan.conflicts], true);
     return this.getPullChanges();
   }
 
@@ -270,45 +367,21 @@ export class SyncEngine {
     }
 
     const pending = new Map(this.pullChanges.map((change) => [change.path, change]));
+    const selected: PullChange[] = [];
     for (const path of requested) {
       const change = pending.get(path);
-      if (!change || change.classification !== "server-only") {
+      if (!change || (change.classification !== "server-only" && change.classification !== "server-new")) {
         throw new Error(`${path} is not a server-only change that can be applied safely`);
       }
+      selected.push(change);
     }
 
-    const repositoryId = this.host.settings.repositoryId || await this.ensureRepository();
-    const response = await this.client().getFileContents(repositoryId, requested);
-    const byPath = new Map(response.files.map((file) => [file.path, file]));
-    const validated: Array<{ path: string; file: TFile; content: string; hash: string }> = [];
-
-    for (const path of requested) {
-      const pendingChange = pending.get(path)!;
-      const remote = byPath.get(path);
-      if (!remote || remote.knowledgeId !== pendingChange.knowledgeId) {
-        throw new Error(`Knowz did not return the expected note for ${path}`);
-      }
-      const hash = await contentHash(remote.content);
-      if (hash !== pendingChange.serverHash || (remote.contentHash !== null && remote.contentHash !== hash)) {
-        throw new Error(`${path} changed again in Knowz; review the refreshed version`);
-      }
-      const file = this.host.app.vault.getAbstractFileByPath(path);
-      if (!(file instanceof TFile)) {
-        throw new Error(`${path} no longer exists in this Obsidian vault`);
-      }
-      validated.push({ path, file, content: remote.content, hash });
-    }
-
-    for (const item of validated) {
-      await this.host.app.vault.modify(item.file, item.content);
-      this.host.settings.knownFiles[item.path] = item.hash;
-    }
-    await this.host.saveSettings();
-    const applied = new Set(requested);
+    const written = await this.writeRemoteNotes(selected);
+    const applied = new Set(written);
     this.pullChanges = this.pullChanges.filter((change) => !applied.has(change.path));
     this.lastPullNoticeSignature = "";
     new Notice(
-      `${requested.length} ${requested.length === 1 ? "note" : "notes"} applied from Knowz.`,
+      `${written.length} ${written.length === 1 ? "note" : "notes"} applied from Knowz.`,
     );
   }
 
@@ -331,6 +404,18 @@ export class SyncEngine {
   }
 
   async runFullSync(): Promise<void> {
+    await this.runDirectedSync("sync");
+  }
+
+  async runPushSync(): Promise<void> {
+    await this.runDirectedSync("push");
+  }
+
+  async runPullSync(options?: { quiet?: boolean }): Promise<void> {
+    await this.runDirectedSync("pull", options?.quiet ?? false);
+  }
+
+  private async runDirectedSync(mode: "sync" | "push" | "pull", quiet = false): Promise<void> {
     if (this.fullSyncInFlight) {
       new Notice("A Knowz full sync is already running.");
       return;
@@ -340,75 +425,52 @@ export class SyncEngine {
     const settings = this.host.settings;
 
     try {
+      const snapshot = await this.readSyncableDisk();
+      if (!snapshot) {
+        return;
+      }
+
+      const { current, contents } = snapshot;
       const repositoryId = await this.ensureRepository();
-      const markdownFiles = this.host.app.vault
-        .getMarkdownFiles()
-        .filter((file) =>
-          !isExcluded(file.path, settings.excludeGlobs, this.host.app.vault.configDir))
-        .sort((left, right) => left.path.localeCompare(right.path));
-
-      if (isUnsafeFullSyncPlan(markdownFiles.length, Object.keys(settings.knownFiles).length)) {
-        new Notice(
-          "Knowz sync aborted: the vault reported no Markdown files while " +
-            `${Object.keys(settings.knownFiles).length} are already synced. Refusing to delete ` +
-            "every synced item. Try again once the vault has finished loading.",
-        );
-        return;
-      }
-
-      const contents = new Map<string, string>();
-      const current: Record<string, string> = {};
-
-      for (const file of markdownFiles) {
-        const content = await this.host.app.vault.cachedRead(file);
-        if (content.trim() === "" && !(file.path in settings.knownFiles)) {
-          continue;
-        }
-        contents.set(file.path, content);
-        current[file.path] = await contentHash(content);
-      }
-
-      if (Object.keys(current).length === 0 && Object.keys(settings.knownFiles).length > 0) {
-        new Notice(
-          "Knowz sync aborted: filtering found no syncable Markdown files while " +
-            `${Object.keys(settings.knownFiles).length} are already synced. Refusing to delete ` +
-            "synced items from this incomplete disk view.",
-        );
-        return;
-      }
-
-      let plan: { files: CliFileChange[] };
-      let protectedPullPaths = new Set<string>();
+      let plan: BidirectionalPlan;
       try {
         const response = await this.client().getFileManifest(repositoryId);
-        const manifest = Object.fromEntries(
-          response.files.map((file) => [file.path, file.contentHash]),
-        );
-        const pullChanges = classifyPullChanges(current, response.files, settings.knownFiles);
-        this.storePullChanges(pullChanges, true);
-        protectedPullPaths = new Set(
-          pullChanges
-            .filter((change) => change.classification === "server-only" || change.classification === "both-changed")
-            .map((change) => change.path),
-        );
-        plan = {
-          files: computeReconcilePlan(current, manifest, settings.knownFiles).files
-            .filter((file) => !protectedPullPaths.has(file.path) && !protectedPullPaths.has(file.oldPath ?? "")),
-        };
+        plan = planBidirectionalSync(current, response.files, settings.knownFiles);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         new Notice(
           `Knowz manifest reconciliation unavailable; continuing with local sync state: ${message}`,
         );
         plan = {
-          files: pairRenames(
+          pull: [],
+          conflicts: [],
+          push: pairRenames(
             computeSyncPlan(current, settings.knownFiles).files,
             (path) => settings.knownFiles[path],
           ),
         };
       }
 
-      const plannedFiles = plan.files.map((file) =>
+      this.storePullChanges([...plan.pull, ...plan.conflicts], true);
+
+      let pulled = 0;
+      if (mode !== "push") {
+        pulled = (await this.writeRemoteNotes(plan.pull)).length;
+      }
+      if (mode !== "pull" || plan.conflicts.length > 0) {
+        await this.writeConflictSidecars(plan.conflicts);
+      }
+
+      if (mode === "pull") {
+        this.pullChanges = this.pullChanges.filter((change) => change.classification === "both-changed");
+        await this.host.saveSettings();
+        if (!quiet || pulled > 0 || plan.conflicts.length > 0) {
+          new Notice(this.directionNotice("pull", pulled, plan.conflicts.length, null));
+        }
+        return;
+      }
+
+      const plannedFiles = plan.push.map((file) =>
         file.action === 0 || file.action === 1 || file.action === 3
           ? { ...file, content: contents.get(file.path) ?? "" }
           : file,
@@ -423,24 +485,41 @@ export class SyncEngine {
         relationships,
       );
 
-      const confirmed = withoutUnconfirmed(current, unconfirmedPaths);
-      for (const path of protectedPullPaths) {
-        const previous = settings.knownFiles[path];
-        if (previous === undefined) {
-          delete confirmed[path];
-        } else {
-          confirmed[path] = previous;
+      const nextKnown = { ...settings.knownFiles, ...current };
+      for (const change of plan.pull) {
+        const confirmed = settings.knownFiles[change.path];
+        if (confirmed !== undefined) {
+          nextKnown[change.path] = confirmed;
         }
       }
-      settings.knownFiles = confirmed;
+      for (const file of plan.push) {
+        if (file.action === 2 && !unconfirmedPaths.has(file.path)) {
+          delete nextKnown[file.path];
+          if (file.oldPath) {
+            delete nextKnown[file.oldPath];
+          }
+        }
+        if (file.action === 3 && file.oldPath && !unconfirmedPaths.has(file.path)) {
+          delete nextKnown[file.oldPath];
+        }
+      }
+      for (const path of unconfirmedPaths) {
+        const previous = settings.knownFiles[path];
+        if (previous === undefined) {
+          delete nextKnown[path];
+        } else {
+          nextKnown[path] = previous;
+        }
+      }
+      settings.knownFiles = nextKnown;
       await this.host.saveSettings();
+      this.pullChanges = this.pullChanges.filter((change) => change.classification === "both-changed");
       new Notice(
         result.filesErrored > 0
-          ? `Knowz sync incomplete: ${result.filesAdded} added, ${result.filesModified} modified, ` +
+          ? `Knowz sync incomplete: pulled ${pulled}, ${result.filesAdded} added, ${result.filesModified} modified, ` +
               `${result.filesDeleted} deleted, ${result.filesErrored} failed. ` +
               "The failed notes will be retried on the next sync."
-          : `Knowz sync complete: ${result.filesAdded} added, ${result.filesModified} modified, ` +
-              `${result.filesDeleted} deleted, ${result.relationshipsImported} relationships imported.`,
+          : this.directionNotice(mode, pulled, plan.conflicts.length, result),
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -515,11 +594,12 @@ export class SyncEngine {
           .filter((file): file is CliFileChange & { contentHash: string } => Boolean(file.contentHash))
           .map((file) => [file.path, file.contentHash]),
       );
-      const pullChanges = classifyPullChanges(
+      const planned = planBidirectionalSync(
         diskForDetection,
         manifest.files,
         settings.knownFiles,
       );
+      const pullChanges = [...planned.pull, ...planned.conflicts];
       this.storePullChanges(pullChanges, false);
       const protectedPullPaths = new Set(
         pullChanges
@@ -640,6 +720,178 @@ export class SyncEngine {
     return { total, unconfirmedPaths };
   }
 
+  private async planFromServer(): Promise<BidirectionalPlan> {
+    const snapshot = await this.readSyncableDisk();
+    if (!snapshot) {
+      return { pull: [], push: [], conflicts: [] };
+    }
+    const repositoryId = this.host.settings.repositoryId || await this.ensureRepository();
+    const manifest = await this.client().getFileManifest(repositoryId);
+    return planBidirectionalSync(snapshot.current, manifest.files, this.host.settings.knownFiles);
+  }
+
+  private async readSyncableDisk(): Promise<{ current: Record<string, string>; contents: Map<string, string> } | null> {
+    const settings = this.host.settings;
+    const markdownFiles = this.host.app.vault
+      .getMarkdownFiles()
+      .filter((file) =>
+        !isExcluded(file.path, settings.excludeGlobs, this.host.app.vault.configDir)
+        && !isConflictSidecar(file.path))
+      .sort((left, right) => left.path.localeCompare(right.path));
+
+    if (isUnsafeFullSyncPlan(markdownFiles.length, Object.keys(settings.knownFiles).length)) {
+      new Notice(
+        "Knowz sync aborted: the vault reported no Markdown files while " +
+          `${Object.keys(settings.knownFiles).length} are already synced. Refusing to delete ` +
+          "every synced item. Try again once the vault has finished loading.",
+      );
+      return null;
+    }
+
+    const contents = new Map<string, string>();
+    const current: Record<string, string> = {};
+    for (const file of markdownFiles) {
+      const content = await this.host.app.vault.cachedRead(file);
+      if (content.trim() === "" && !(file.path in settings.knownFiles)) {
+        continue;
+      }
+      contents.set(file.path, content);
+      current[file.path] = await contentHash(content);
+    }
+
+    if (Object.keys(current).length === 0 && Object.keys(settings.knownFiles).length > 0) {
+      new Notice(
+        "Knowz sync aborted: filtering found no syncable Markdown files while " +
+          `${Object.keys(settings.knownFiles).length} are already synced. Refusing to delete ` +
+          "synced items from this incomplete disk view.",
+      );
+      return null;
+    }
+
+    return { current, contents };
+  }
+
+  private async writeRemoteNotes(changes: PullChange[]): Promise<string[]> {
+    const writable = changes.filter(
+      (change) => change.classification === "server-only" || change.classification === "server-new",
+    );
+    if (writable.length === 0) {
+      return [];
+    }
+
+    const repositoryId = this.host.settings.repositoryId || await this.ensureRepository();
+    const response = await this.client().getFileContents(
+      repositoryId,
+      writable.map((change) => change.path),
+    );
+    const byPath = new Map(response.files.map((file) => [file.path, file]));
+    const written: string[] = [];
+
+    for (const change of writable) {
+      const remote = byPath.get(change.path);
+      if (!remote || remote.knowledgeId !== change.knowledgeId) {
+        throw new Error(`Knowz did not return the expected note for ${change.path}`);
+      }
+      if (remote.isEncrypted) {
+        new Notice(`Skipped encrypted Knowz note: ${change.path}`);
+        continue;
+      }
+      const hash = await contentHash(remote.content);
+      if (hash !== change.serverHash || (remote.contentHash !== null && remote.contentHash !== hash)) {
+        throw new Error(`${change.path} changed again in Knowz; review the refreshed version`);
+      }
+      await this.writeVaultFile(change.path, remote.content);
+      this.host.settings.knownFiles[change.path] = hash;
+      written.push(change.path);
+    }
+
+    if (written.length > 0) {
+      await this.host.saveSettings();
+    }
+    return written;
+  }
+
+  private async writeConflictSidecars(conflicts: PullChange[]): Promise<void> {
+    if (conflicts.length === 0) {
+      return;
+    }
+
+    const repositoryId = this.host.settings.repositoryId || await this.ensureRepository();
+    const response = await this.client().getFileContents(
+      repositoryId,
+      conflicts.map((change) => change.path),
+    );
+    const byPath = new Map(response.files.map((file) => [file.path, file]));
+
+    for (const change of conflicts) {
+      const remote = byPath.get(change.path);
+      if (!remote || remote.isEncrypted) {
+        continue;
+      }
+      const sidecar = conflictSidecarPath(change.path);
+      const body =
+        `<!-- Knowz conflict copy of ${change.path}. The original note kept your Obsidian edits. -->\n\n` +
+        remote.content;
+      await this.writeVaultFile(sidecar, body);
+    }
+  }
+
+  private async writeVaultFile(path: string, content: string): Promise<void> {
+    const vault = this.host.app.vault as App["vault"] & {
+      create?(path: string, data: string): Promise<TFile>;
+      createFolder?(path: string): Promise<unknown>;
+    };
+    await this.ensureParentFolders(path);
+    const existing = vault.getAbstractFileByPath(path);
+    if (existing instanceof TFile) {
+      await vault.modify(existing, content);
+      return;
+    }
+    if (!vault.create) {
+      throw new Error(`${path} no longer exists in this Obsidian vault`);
+    }
+    await vault.create(path, content);
+  }
+
+  private async ensureParentFolders(path: string): Promise<void> {
+    const vault = this.host.app.vault as App["vault"] & {
+      createFolder?(path: string): Promise<unknown>;
+    };
+    const parts = path.split("/").slice(0, -1);
+    let prefix = "";
+    for (const part of parts) {
+      prefix = prefix ? `${prefix}/${part}` : part;
+      if (vault.getAbstractFileByPath(prefix) || !vault.createFolder) {
+        continue;
+      }
+      try {
+        await vault.createFolder(prefix);
+      } catch {
+        // Another create may have won the race; the next write will fail if the folder is truly missing.
+      }
+    }
+  }
+
+  private directionNotice(
+    mode: "sync" | "push" | "pull",
+    pulled: number,
+    conflicts: number,
+    result: PushResult | null,
+  ): string {
+    const conflictText = conflicts > 0
+      ? `, ${conflicts} ${conflicts === 1 ? "conflict" : "conflicts"} saved as .knowz-conflict.md`
+      : "";
+    if (mode === "pull" || !result) {
+      return `Knowz pull complete: ${pulled} ${pulled === 1 ? "note" : "notes"} written${conflictText}.`;
+    }
+    if (mode === "push") {
+      return `Knowz push complete: ${result.filesAdded} added, ${result.filesModified} modified, ` +
+        `${result.filesDeleted} deleted${conflictText}.`;
+    }
+    return `Knowz sync complete: pulled ${pulled}, ${result.filesAdded} added, ${result.filesModified} modified, ` +
+      `${result.filesDeleted} deleted, ${result.relationshipsImported} relationships imported${conflictText}.`;
+  }
+
   private client(): KnowzClient {
     return new KnowzClient({
       apiBaseUrl: this.host.settings.apiBaseUrl,
@@ -649,7 +901,10 @@ export class SyncEngine {
 
   private storePullChanges(detected: PullChange[], replace: boolean): void {
     const relevant = detected.filter(
-      (change) => change.classification === "server-only" || change.classification === "both-changed",
+      (change) =>
+        change.classification === "server-only"
+        || change.classification === "server-new"
+        || change.classification === "both-changed",
     );
     if (replace) {
       this.pullChanges = relevant;
@@ -669,16 +924,10 @@ export class SyncEngine {
     }
     this.lastPullNoticeSignature = signature;
 
-    const serverOnly = this.pullChanges.filter((change) => change.classification === "server-only").length;
     const conflicts = this.pullChanges.filter((change) => change.classification === "both-changed").length;
-    if (serverOnly > 0) {
-      new Notice(
-        `${serverOnly} ${serverOnly === 1 ? "note" : "notes"} changed in Knowz — review before syncing ${serverOnly === 1 ? "it" : "them"}.`,
-      );
-    }
     if (conflicts > 0) {
       new Notice(
-        `${conflicts} ${conflicts === 1 ? "note has" : "notes have"} changes in both Knowz and Obsidian — review ${conflicts === 1 ? "the conflict" : "the conflicts"}.`,
+        `${conflicts} ${conflicts === 1 ? "note has" : "notes have"} changes in both Knowz and Obsidian — Knowz ${conflicts === 1 ? "copy" : "copies"} saved as .knowz-conflict.md.`,
       );
     }
   }

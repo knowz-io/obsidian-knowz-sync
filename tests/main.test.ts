@@ -89,6 +89,21 @@ describe("KnowzSyncPlugin.onload", () => {
       callback: expect.any(Function),
     }));
     expect(addCommand).toHaveBeenCalledWith(expect.objectContaining({
+      id: "sync-now",
+      name: "Sync with Knowz",
+      callback: expect.any(Function),
+    }));
+    expect(addCommand).toHaveBeenCalledWith(expect.objectContaining({
+      id: "push-to-knowz",
+      name: "Push to Knowz",
+      callback: expect.any(Function),
+    }));
+    expect(addCommand).toHaveBeenCalledWith(expect.objectContaining({
+      id: "pull-from-knowz",
+      name: "Pull from Knowz",
+      callback: expect.any(Function),
+    }));
+    expect(addCommand).toHaveBeenCalledWith(expect.objectContaining({
       id: "review-knowz-changes",
       name: "Review changes from Knowz",
       callback: expect.any(Function),
@@ -103,7 +118,7 @@ describe("KnowzSyncPlugin.onload", () => {
       hasConfirmedFirstSync: true,
       syncOnStartup: false,
     });
-    const detect = vi.spyOn(SyncEngine.prototype, "detectPullChanges").mockResolvedValue([]);
+    const detect = vi.spyOn(SyncEngine.prototype, "runPullSync").mockResolvedValue(undefined);
 
     await plugin.onload();
     await Promise.resolve();

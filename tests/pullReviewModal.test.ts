@@ -3,7 +3,7 @@ import { settingInstances } from "./mocks/obsidian";
 import { PullReviewModal } from "../src/pullReviewModal";
 import type { PullChange } from "../src/syncEngine";
 
-function change(path: string, classification: "server-only" | "both-changed"): PullChange {
+function change(path: string, classification: "server-only" | "server-new" | "both-changed"): PullChange {
   return {
     knowledgeId: `${path}-id`,
     path,
@@ -39,5 +39,18 @@ describe("PullReviewModal", () => {
 
     await footer.buttons[0]?.clickHandler();
     expect(apply).toHaveBeenCalledWith(["safe.md"]);
+  });
+
+  it("treats a server-new note as applyable", async () => {
+    const apply = vi.fn().mockResolvedValue(undefined);
+    const modal = new PullReviewModal({} as never, [
+      change("new.md", "server-new"),
+    ], apply);
+
+    modal.onOpen();
+
+    const created = settingInstances.find((setting) => setting.name === "new.md")!;
+    expect(created.buttons.map((button) => button.text)).toEqual(["Apply"]);
+    expect(created.desc).toContain("New in Knowz");
   });
 });

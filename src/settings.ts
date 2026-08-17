@@ -91,7 +91,14 @@ function isUnderDirectory(path: string, directory: string): boolean {
  * stored data — including, for plugins like this one, API credentials. It is therefore
  * excluded unconditionally rather than relying on a default pattern the user could delete.
  */
+export function isConflictSidecar(path: string): boolean {
+  return /\.knowz-conflict\.(md|markdown)$/i.test(path);
+}
+
 export function isExcluded(path: string, excludeGlobs: string[], configDir?: string): boolean {
+  if (isConflictSidecar(path)) {
+    return true;
+  }
   if (configDir !== undefined && isUnderDirectory(path, configDir)) {
     return true;
   }

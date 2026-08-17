@@ -43,6 +43,7 @@ export interface GitFileContentResponse {
     content: string;
     contentHash: string | null;
     updatedAt: string;
+    isEncrypted?: boolean;
   }>;
   totalCount: number;
   maxBatchSize: number;

@@ -9,9 +9,10 @@ searchable by meaning rather than keyword, traversable as a graph that inherits 
 guessing. The same corpus powers enterprise AI chat, so a team can ask questions of everything
 it has collectively written.
 
-Obsidian stays in control. Nothing is written back automatically: when a note changes in
-Knowz, the plugin shows it for review and only updates the local file when you explicitly
-choose **Apply**.
+Sync is two-way. Local edits upload automatically after a short quiet period, and notes that
+changed only in Knowz are written into the vault on **Sync**, **Pull**, or the periodic
+auto-pull. If the same note changed on both sides, your Obsidian copy is kept and the Knowz
+version is saved beside it as a `.knowz-conflict.md` sidecar.
 
 ## See what your Obsidian vault becomes
 
@@ -78,8 +79,11 @@ your vault there and keep it current:
   them.
 - **Keeps up as you write.** Create, edit, rename, and delete are picked up from vault events
   and pushed in a coalesced batch, so a burst of edits becomes one upload rather than fifty.
-- **Reviews changes from Knowz.** Server-only edits are detected passively and can be applied
-  one at a time or all together. Conflicts are reported but never overwritten automatically.
+- **Syncs both ways.** **Sync with Knowz** pushes local notes and pulls Knowz notes in one
+  pass. **Push to Knowz** and **Pull from Knowz** are available as commands and settings
+  buttons when you want one direction only.
+- **Keeps conflicts visible.** If a note changed in both places, Obsidian wins, the Knowz
+  copy is written to `{name}.knowz-conflict.md`, and a Notice tells you.
 - **Titles notes the way you'd expect.** Front-matter `title` wins, then a leading H1, then
   the filename.
 - **Stays out of the way.** Your Obsidian configuration folder, `.trash/`, and `.smart-env/`
@@ -140,15 +144,16 @@ settings for "Knowz", "sign in", "vault", or "excluded paths".
 |---------|---------------|---------------------|
 | **Connect to Knowz** | Browser sign-in that creates an expiring personal key. | Approve in the Knowz web app. |
 | **Knowz vault** | The destination for this Obsidian vault. | Pick or create one after connecting. |
-| **Sync on startup** | Run a full sync each time Obsidian launches. Off by default. | Your choice. |
+| **Sync now / Push / Pull** | Two-way sync, or one direction. | Ribbon, command palette, and Settings. |
+| **Sync on startup** | Run a full two-way sync each time Obsidian launches. Off by default. | Your choice. |
 | **Excluded paths** | Folders and file patterns to keep out of Knowz. One per line. | See [Excluding notes](#excluding-notes). |
 
 The API URL, personal key, and raw vault ID remain under **Advanced manual setup** for
 self-hosted deployments and recovery.
 
-Then run a sync from the ribbon icon or the **Sync vault** command. Before the first
-upload the plugin tells you how many notes it is about to send and where, and waits for you to
-agree. Nothing leaves your vault until you do.
+Then run **Sync with Knowz** from the ribbon, the command palette, or Settings. Before the
+first sync the plugin tells you how many notes it will upload and how many already in Knowz
+it will download, and waits for you to agree. Nothing leaves or is written until you do.
 
 To see exactly what would be sent at any time, run **Preview which notes would sync**.
 
@@ -170,11 +175,12 @@ Matching is case-insensitive, and lines beginning with `#` are treated as commen
 
 ## How syncing behaves
 
-**Knowz changes require review.** A note changed only in Knowz is protected from the next push
-and appears under **Review changes from Knowz**. Choose **Apply** to replace that local note with
-the reviewed Knowz version. If both copies changed, the plugin reports a conflict and writes
-nothing. Knowz-side deletes are still undone by the next full sync; delete a note in Obsidian
-to remove it permanently.
+**Sync is bidirectional.** A note changed only in Knowz is pulled on Sync, Pull, and the
+five-minute auto-pull. A note changed only in Obsidian is pushed. If both copies changed,
+Obsidian keeps the note, the Knowz version is written to `{name}.knowz-conflict.md`, and the
+Obsidian body is pushed so the sides converge. Knowz-side deletes are not pulled; delete a
+note in Obsidian to remove it permanently. Encrypted Knowz items are skipped and never
+written as ciphertext. AI summaries stay in Knowz and are not written into notes.
 
 **Full syncs repair drift.** A full sync compares your eligible notes against a fresh manifest
 from Knowz, so anything left inconsistent by a previously failed push is corrected rather than
@@ -194,8 +200,9 @@ Beyond that:
   after the server confirms, so an interrupted sync resumes rather than silently skipping.
 - A full sync that reads an empty vault while notes are already synced is refused outright,
   rather than interpreting it as "the user deleted everything."
-- The plugin checks confirmed repositories for Knowz-side changes every five minutes. You can
-  run **Review changes from Knowz** at any time for an immediate check.
+- After the first confirmed sync, the plugin pulls safe Knowz-side changes every five minutes
+  and still pushes local edits after a 15-second quiet period. **Sync with Knowz**, **Push to
+  Knowz**, and **Pull from Knowz** run the same planner immediately.
 
 ## Disclosures
 
@@ -236,10 +243,11 @@ Knowz.
 The plugin shows you the count and the destination before the first upload, and the **Preview
 which notes would sync** command lists what is currently in scope.
 
-**What is written.** The plugin never writes a Knowz change automatically. When you explicitly
-choose **Apply** or **Apply all** in the review dialog, it replaces only the listed server-only
-Markdown files with their current Knowz content. A note changed on both sides is shown as a
-conflict and is not written.
+**What is written.** The plugin writes Markdown into this vault on **Sync**, **Pull**, the
+five-minute auto-pull, and explicit **Apply**. It creates missing notes and parent folders
+for notes that exist only in Knowz. On a conflict it writes a `{name}.knowz-conflict.md`
+sidecar next to the original note and leaves your Obsidian copy in place. Encrypted Knowz
+items and AI summaries are not written. Conflict sidecars are never uploaded.
 
 **No telemetry.** This plugin collects no usage analytics, no crash reports, and no
 client-side telemetry of any kind.
@@ -272,8 +280,8 @@ stored in a file.
 
 ## Current limitations
 
-- Knowz changes require explicit review; conflicts are detected but are not merged or applied.
 - Knowz-side deletes are not pulled into Obsidian.
+- Conflicts are not merged: Obsidian keeps the note and the Knowz copy is saved as a sidecar.
 - Attachments and non-Markdown files are not synced.
 - Front-matter tags are not yet mapped to Knowz tags.
 - Empty notes are not synced until they contain content.

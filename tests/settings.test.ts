@@ -12,6 +12,11 @@ describe("isExcluded", () => {
     expect(isExcluded("Notes/a.md", [".obsidian/"])).toBe(false);
   });
 
+  it("never syncs Knowz conflict sidecars", () => {
+    expect(isExcluded("Note.knowz-conflict.md", [])).toBe(true);
+    expect(isExcluded("Folder/Note.knowz-conflict.md", [])).toBe(true);
+  });
+
   it("still treats a plain folder name as a directory prefix", () => {
     expect(isExcluded("Archive/old.md", ["Archive"])).toBe(true);
     expect(isExcluded("Archive", ["Archive"])).toBe(true);
