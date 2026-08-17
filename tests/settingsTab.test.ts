@@ -269,11 +269,13 @@ describe("native Knowz onboarding", () => {
     ]);
     await plugin.refreshVaults();
     const init = vi.spyOn(SyncEngine.prototype, "initializeRepository").mockResolvedValue("repo-1");
+    const sync = vi.spyOn(plugin, "runFullSync").mockResolvedValue(undefined);
 
     await tab.setControlValue("selectedVaultId", "vault-1");
 
     expect(plugin.settings).toMatchObject({ vaultId: "vault-1", vaultName: "General" });
     expect(init).toHaveBeenCalledOnce();
+    expect(sync).toHaveBeenCalledOnce();
   });
 
   // The name is asked for in a plugin Modal, not window.prompt: Obsidian's guidelines
@@ -288,12 +290,14 @@ describe("native Knowz onboarding", () => {
       name: "Research",
     });
     const init = vi.spyOn(SyncEngine.prototype, "initializeRepository").mockResolvedValue("repo-new");
+    const sync = vi.spyOn(plugin, "runFullSync").mockResolvedValue(undefined);
 
     await tab.setControlValue("selectedVaultId", "__create__");
 
     expect(promptForVaultNameMock).toHaveBeenCalledWith(plugin.app, "TestVault");
     expect(plugin.settings).toMatchObject({ vaultId: "vault-new", vaultName: "Research" });
     expect(init).toHaveBeenCalledOnce();
+    expect(sync).toHaveBeenCalledOnce();
   });
 
   // Dismissing the name modal must leave the existing binding exactly as it was: the old

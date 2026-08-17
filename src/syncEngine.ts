@@ -2,6 +2,7 @@
 import { Notice, TFile, type App } from "obsidian";
 import { contentHash } from "./hash";
 import {
+  KnowzApiError,
   KnowzClient,
   type CliFileChange,
   type CliRelationship,
@@ -434,9 +435,15 @@ export class SyncEngine {
       const repositoryId = await this.ensureRepository();
       let plan: BidirectionalPlan;
       try {
-        const response = await this.client().getFileManifest(repositoryId);
+        const response = await this.withLiveRepository(
+          repositoryId,
+          (liveId) => this.client().getFileManifest(liveId),
+        );
         plan = planBidirectionalSync(current, response.files, settings.knownFiles);
       } catch (error) {
+        if (isMissingRepository(error)) {
+          throw error;
+        }
         const message = error instanceof Error ? error.message : String(error);
         new Notice(
           `Knowz manifest reconciliation unavailable; continuing with local sync state: ${message}`,
@@ -479,10 +486,9 @@ export class SyncEngine {
         this.host.app.metadataCache.resolvedLinks,
         new Set(Object.keys(current)),
       );
-      const { total: result, unconfirmedPaths } = await this.pushBatches(
-        repositoryId,
-        plannedFiles,
-        relationships,
+      const { total: result, unconfirmedPaths } = await this.withLiveRepository(
+        this.host.settings.repositoryId || repositoryId,
+        (liveId) => this.pushBatches(liveId, plannedFiles, relationships),
       );
 
       const nextKnown = { ...settings.knownFiles, ...current };
@@ -588,7 +594,10 @@ export class SyncEngine {
         return;
       }
 
-      const manifest = await this.client().getFileManifest(repositoryId);
+      const manifest = await this.withLiveRepository(
+        repositoryId,
+        (liveId) => this.client().getFileManifest(liveId),
+      );
       const diskForDetection = Object.fromEntries(
         files
           .filter((file): file is CliFileChange & { contentHash: string } => Boolean(file.contentHash))
@@ -625,10 +634,9 @@ export class SyncEngine {
         this.host.app.metadataCache.resolvedLinks,
         new Set(syncedFiles.map((file) => file.path)),
       ).filter((relationship) => changedSources.has(relationship.sourcePath));
-      const { total: result, unconfirmedPaths } = await this.pushBatches(
-        repositoryId,
-        pairedFiles,
-        relationships,
+      const { total: result, unconfirmedPaths } = await this.withLiveRepository(
+        this.host.settings.repositoryId || repositoryId,
+        (liveId) => this.pushBatches(liveId, pairedFiles, relationships),
       );
 
       // A path the server could not confirm keeps whatever hash it had before, so the next
@@ -658,12 +666,27 @@ export class SyncEngine {
     }
   }
 
-  private async ensureRepository(): Promise<string> {
-    if (!this.initializedThisSession || !this.host.settings.repositoryId) {
-      return this.initializeRepository();
+  private async ensureRepository(force = false): Promise<string> {
+    if (!force && this.initializedThisSession && this.host.settings.repositoryId) {
+      return this.host.settings.repositoryId;
     }
 
-    return this.host.settings.repositoryId;
+    return this.initializeRepository();
+  }
+
+  private async withLiveRepository<T>(
+    repositoryId: string,
+    operation: (repositoryId: string) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await operation(repositoryId);
+    } catch (error) {
+      if (!isMissingRepository(error)) {
+        throw error;
+      }
+      const recovered = await this.ensureRepository(true);
+      return operation(recovered);
+    }
   }
 
   private async pushBatches(
@@ -725,8 +748,11 @@ export class SyncEngine {
     if (!snapshot) {
       return { pull: [], push: [], conflicts: [] };
     }
-    const repositoryId = this.host.settings.repositoryId || await this.ensureRepository();
-    const manifest = await this.client().getFileManifest(repositoryId);
+    const repositoryId = await this.ensureRepository();
+    const manifest = await this.withLiveRepository(
+      repositoryId,
+      (liveId) => this.client().getFileManifest(liveId),
+    );
     return planBidirectionalSync(snapshot.current, manifest.files, this.host.settings.knownFiles);
   }
 
@@ -779,10 +805,13 @@ export class SyncEngine {
       return [];
     }
 
-    const repositoryId = this.host.settings.repositoryId || await this.ensureRepository();
-    const response = await this.client().getFileContents(
+    const repositoryId = await this.ensureRepository();
+    const response = await this.withLiveRepository(
       repositoryId,
-      writable.map((change) => change.path),
+      (liveId) => this.client().getFileContents(
+        liveId,
+        writable.map((change) => change.path),
+      ),
     );
     const byPath = new Map(response.files.map((file) => [file.path, file]));
     const written: string[] = [];
@@ -816,10 +845,13 @@ export class SyncEngine {
       return;
     }
 
-    const repositoryId = this.host.settings.repositoryId || await this.ensureRepository();
-    const response = await this.client().getFileContents(
+    const repositoryId = await this.ensureRepository();
+    const response = await this.withLiveRepository(
       repositoryId,
-      conflicts.map((change) => change.path),
+      (liveId) => this.client().getFileContents(
+        liveId,
+        conflicts.map((change) => change.path),
+      ),
     );
     const byPath = new Map(response.files.map((file) => [file.path, file]));
 
@@ -931,6 +963,10 @@ export class SyncEngine {
       );
     }
   }
+}
+
+function isMissingRepository(error: unknown): boolean {
+  return error instanceof KnowzApiError && error.status === 404;
 }
 
 function batchFiles(files: CliFileChange[]): CliFileChange[][] {

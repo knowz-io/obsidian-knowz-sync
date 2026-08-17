@@ -1,6 +1,6 @@
 {
   "name": "obsidian-knowz-sync",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Sync Obsidian notes and wikilink relationships into a Knowz vault.",
   "license": "MIT",
   "private": true,

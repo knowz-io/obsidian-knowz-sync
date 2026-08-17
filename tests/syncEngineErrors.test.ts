@@ -1,7 +1,8 @@
 import { TFile, type App } from "obsidian";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { noticeMessages } from "./mocks/obsidian";
-import { KnowzClient, type PushResult } from "../src/knowzClient";
+import { contentHash } from "../src/hash";
+import { KnowzApiError, KnowzClient, type PushResult } from "../src/knowzClient";
 import { DEFAULT_SETTINGS, type KnowzPluginSettings } from "../src/settings";
 import { SyncEngine, type SyncEngineHost } from "../src/syncEngine";
 
@@ -28,6 +29,18 @@ function makeEngine(contents: Record<string, string>, knownFiles: Record<string,
         getName: () => "TestVault",
         getMarkdownFiles: () => files,
         cachedRead: async (file: TFile) => contents[file.path] ?? "",
+        modify: async (file: TFile, content: string) => {
+          contents[file.path] = content;
+        },
+        create: async (path: string, content: string) => {
+          contents[path] = content;
+          const created = new TFile();
+          created.path = path;
+          fileByPath.set(path, created);
+          files.push(created);
+          return created;
+        },
+        createFolder: async () => undefined,
         getAbstractFileByPath: (path: string) => fileByPath.get(path) ?? null,
       },
       metadataCache: { resolvedLinks: {} },
@@ -139,5 +152,78 @@ describe("SyncEngine partial-failure honesty", () => {
     expect(settings.knownFiles["a.md"]).toBe("old-hash");
     expect(settings.knownFiles["b.md"]).toBeUndefined();
     expect(noticeMessages.join("\n")).toMatch(/failed/i);
+  });
+});
+
+describe("SyncEngine stale repository recovery", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    noticeMessages.length = 0;
+  });
+
+  it("re-inits and pushes to the new repository when the stored one 404s", async () => {
+    const { engine, settings } = makeEngine({ "a.md": "one" });
+    const init = vi.spyOn(KnowzClient.prototype, "initRepository")
+      .mockResolvedValueOnce("dead-repo")
+      .mockResolvedValueOnce("live-repo");
+    await engine.initializeRepository();
+    expect(settings.repositoryId).toBe("dead-repo");
+
+    vi.spyOn(KnowzClient.prototype, "getFileManifest")
+      .mockRejectedValueOnce(new KnowzApiError("Repository dead-repo not found", 404))
+      .mockResolvedValue({ files: [], totalCount: 0 });
+    const push = vi.spyOn(KnowzClient.prototype, "push").mockResolvedValue(
+      result({ filesAdded: 1 }),
+    );
+
+    await engine.runFullSync();
+
+    expect(init).toHaveBeenCalledTimes(2);
+    expect(settings.repositoryId).toBe("live-repo");
+    expect(push).toHaveBeenCalledWith("live-repo", expect.anything(), expect.anything());
+    expect(Object.keys(settings.knownFiles)).toEqual(["a.md"]);
+    expect(noticeMessages.join("\n")).not.toMatch(/not found/i);
+    expect(noticeMessages.join("\n")).toMatch(/sync complete/i);
+  });
+
+  it("recovers a stale repository on pull instead of writing nothing", async () => {
+    const serverContent = "pulled from Knowz";
+    const serverHash = await contentHash(serverContent);
+    const { engine, host, settings } = makeEngine({});
+    vi.spyOn(KnowzClient.prototype, "initRepository")
+      .mockResolvedValueOnce("dead-repo")
+      .mockResolvedValueOnce("live-repo");
+    await engine.initializeRepository();
+
+    vi.spyOn(KnowzClient.prototype, "getFileManifest")
+      .mockRejectedValueOnce(new KnowzApiError("Repository dead-repo not found", 404))
+      .mockResolvedValue({
+        files: [{
+          knowledgeId: "remote-1",
+          path: "from-knowz.md",
+          contentHash: serverHash,
+          updatedAt: "now",
+        }],
+        totalCount: 1,
+      });
+    vi.spyOn(KnowzClient.prototype, "getFileContents").mockResolvedValue({
+      files: [{
+        knowledgeId: "remote-1",
+        path: "from-knowz.md",
+        content: serverContent,
+        contentHash: serverHash,
+        updatedAt: "now",
+      }],
+      totalCount: 1,
+      maxBatchSize: 100,
+    });
+
+    await engine.runPullSync();
+
+    expect(settings.repositoryId).toBe("live-repo");
+    expect(await host.app.vault.cachedRead(
+      host.app.vault.getAbstractFileByPath("from-knowz.md") as TFile,
+    )).toBe(serverContent);
+    expect(noticeMessages.join("\n")).toMatch(/1 note written/i);
   });
 });

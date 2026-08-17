@@ -110,17 +110,21 @@ export default class KnowzSyncPlugin extends Plugin {
     }
 
     this.registerVaultWatchers();
-    this.startPullDetection();
 
     // Repository initialization is no longer done eagerly on every launch. It is a network
     // call that creates server-side state, and doing it unprompted meant simply having the
     // plugin enabled contacted Knowz at startup. ensureRepository() performs it lazily on
     // the first sync the user actually asks for.
-    if (!this.settings.syncOnStartup) {
+    //
+    // Do not start the quiet pull here when a startup full sync is about to run: both
+    // share fullSyncInFlight, so the pull would win the race and the full sync would
+    // no-op with "already running".
+    if (this.settings.syncOnStartup) {
+      await this.runFullSync();
       return;
     }
 
-    await this.runFullSync();
+    this.startPullDetection();
   }
 
   async loadSettings(): Promise<void> {
@@ -313,6 +317,7 @@ export default class KnowzSyncPlugin extends Plugin {
     if (vault) {
       await this.syncEngine.initializeRepository();
       new Notice(`Knowz vault selected: ${vault.name}.`);
+      await this.runFullSync();
     }
   }
 

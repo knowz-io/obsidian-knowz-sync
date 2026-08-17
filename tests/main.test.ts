@@ -127,6 +127,25 @@ describe("KnowzSyncPlugin.onload", () => {
     expect(detect).toHaveBeenCalledOnce();
   });
 
+  it("does not start a quiet pull that blocks the startup full sync", async () => {
+    const { app } = makeApp(true);
+    const plugin = makePlugin(app, {
+      ...CONFIGURED,
+      repositoryId: "repository-guid",
+      hasConfirmedFirstSync: true,
+      syncOnStartup: true,
+    });
+    const pull = vi.spyOn(SyncEngine.prototype, "runPullSync").mockResolvedValue(undefined);
+    const sync = vi.spyOn(plugin, "runFullSync").mockResolvedValue(undefined);
+
+    await plugin.onload();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sync).toHaveBeenCalledOnce();
+    expect(pull).not.toHaveBeenCalled();
+  });
+
   it("registers watchers once layout is ready", async () => {
     const { app } = makeApp(true);
     const plugin = makePlugin(app, CONFIGURED);
